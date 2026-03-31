@@ -13,49 +13,63 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Deploy to VPS via SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            set -e
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-            # バックアップ
-            timestamp=$(date +%Y%m%d-%H%M%S)
-            mkdir -p /home/ubuntu/vps-backups
-            if [ -d /opt/services/manualine.tech ]; then
-              cp -r /opt/services/manualine.tech /home/ubuntu/vps-backups/manualine-$timestamp
+      - name: Deploy to VPS
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=30 \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'ENDSSH'
+          set -e
+
+          echo "=== デプロイ開始 ==="
+
+          # バックアップ
+          timestamp=$(date +%Y%m%d-%H%M%S)
+          mkdir -p /home/ubuntu/vps-backups
+
+          if [ -d /opt/services/manualine.tech ]; then
+            cp -r /opt/services/manualine.tech /home/ubuntu/vps-backups/manualine-$timestamp
+            echo "✅ バックアップ完了: manualine-$timestamp"
+          fi
+
+          # コード取得
+          mkdir -p /opt/services/manualine.tech
+          cd /opt/services/manualine.tech
+
+          if [ ! -d .git ]; then
+            git clone https://github.com/tao-munakata/myapp.git .
+          else
+            git fetch origin main
+            git reset --hard origin/main
+          fi
+
+          echo "✅ コード取得完了"
+
+          # ビルド & 起動
+          docker compose -f docker-compose.prod.yml up -d --build
+          echo "✅ コンテナ起動完了"
+
+          # ヘルスチェック（最大30秒）
+          for i in $(seq 1 6); do
+            sleep 5
+            if docker compose -f docker-compose.prod.yml ps | grep -q "Up"; then
+              echo "✅ ヘルスチェック OK"
+              exit 0
             fi
+            echo "⏳ 起動待機中... ($i/6)"
+          done
 
-            # コード取得
-            mkdir -p /opt/services/manualine.tech
-            cd /opt/services/manualine.tech
-
-            if [ ! -d .git ]; then
-              git clone https://github.com/tao-munakata/myapp.git .
-            else
-              git fetch origin main
-              git reset --hard origin/main
-            fi
-
-            # ビルド & 起動
-            docker compose -f docker-compose.prod.yml up -d --build 2>&1
-
-            # ヘルスチェック（最大30秒待機）
-            for i in $(seq 1 6); do
-              sleep 5
-              if docker compose -f docker-compose.prod.yml ps | grep -q "Up"; then
-                echo "✅ ヘルスチェック OK"
-                exit 0
-              fi
-              echo "⏳ 起動待機中... ($i/6)"
-            done
-
-            echo "❌ コンテナ起動タイムアウト"
-            docker compose -f docker-compose.prod.yml logs --tail=50
-            exit 1
+          echo "❌ コンテナ起動タイムアウト"
+          docker compose -f docker-compose.prod.yml logs --tail=50
+          exit 1
+          ENDSSH
 
       - name: Notify success
         if: success()
@@ -63,4 +77,4 @@ jobs:
 
       - name: Notify failure
         if: failure()
-        run: echo "❌ デプロイ失敗。ログを確認してください。"
+        run: echo "❌ デプロイ失敗"
