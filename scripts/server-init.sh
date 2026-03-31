@@ -1,13 +1,20 @@
 #!/bin/bash
 # =============================================================================
-# server-init.sh — さくらVPS Ubuntu 24.04 初期セットアップ（サーバー1回のみ実行）
-# 実行: bash server-init.sh your@email.com
+# server-init.sh — さくらVPS Ubuntu 24.04 初期セットアップ
+# 実行方法: sudo bash server-init.sh your@email.com
 # =============================================================================
 set -euo pipefail
 
 EMAIL="${1:-}"
 if [[ -z "$EMAIL" ]]; then
-  echo "使い方: bash server-init.sh your@email.com"
+  echo "使い方: sudo bash server-init.sh your@email.com"
+  exit 1
+fi
+
+# ubuntu ユーザーが存在するか確認
+DEPLOY_USER="ubuntu"
+if ! id "$DEPLOY_USER" &>/dev/null; then
+  echo "エラー: ${DEPLOY_USER} ユーザーが見つかりません"
   exit 1
 fi
 
@@ -67,6 +74,10 @@ else
   echo "Docker: すでにインストール済み"
 fi
 
+# ★ ubuntu を docker グループに追加（sudo なしで docker を実行可能に）
+usermod -aG docker "$DEPLOY_USER"
+echo "✅ ${DEPLOY_USER} を docker グループに追加"
+
 echo "=============================================="
 echo " [5/8] ファイアウォール設定"
 echo "=============================================="
@@ -84,13 +95,15 @@ docker network create proxy 2>/dev/null || echo "proxy ネットワーク: す�
 echo "=============================================="
 echo " [7/8] Traefik (リバースプロキシ + 自動SSL)"
 echo "=============================================="
-mkdir -p /opt/traefik
+TRAEFIK_DIR="/home/${DEPLOY_USER}/traefik"
+mkdir -p "$TRAEFIK_DIR"
+chown "$DEPLOY_USER:$DEPLOY_USER" "$TRAEFIK_DIR"
 
-# Let's Encrypt の証明書ストレージ（権限必須）
-touch /opt/traefik/acme.json
-chmod 600 /opt/traefik/acme.json
+touch "$TRAEFIK_DIR/acme.json"
+chmod 600 "$TRAEFIK_DIR/acme.json"
+chown "$DEPLOY_USER:$DEPLOY_USER" "$TRAEFIK_DIR/acme.json"
 
-cat > /opt/traefik/docker-compose.yml <<EOF
+cat > "$TRAEFIK_DIR/docker-compose.yml" <<EOF
 services:
   traefik:
     image: traefik:v3.3
@@ -113,7 +126,7 @@ services:
       - "443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /opt/traefik/acme.json:/acme.json
+      - ${TRAEFIK_DIR}/acme.json:/acme.json
     networks:
       - proxy
     restart: always
@@ -123,25 +136,28 @@ networks:
     external: true
 EOF
 
-cd /opt/traefik
-docker compose up -d
+chown "$DEPLOY_USER:$DEPLOY_USER" "$TRAEFIK_DIR/docker-compose.yml"
+docker compose -f "$TRAEFIK_DIR/docker-compose.yml" up -d
 echo "Traefik: 起動完了"
 
 echo "=============================================="
 echo " [8/8] サービスディレクトリ作成"
 echo "=============================================="
-mkdir -p /opt/services
-echo "ディレクトリ: /opt/services 作成完了"
+mkdir -p "/home/${DEPLOY_USER}/services"
+chown "$DEPLOY_USER:$DEPLOY_USER" "/home/${DEPLOY_USER}/services"
+echo "ディレクトリ: /home/${DEPLOY_USER}/services 作成完了"
 
 echo ""
 echo "=============================================="
 echo " セットアップ完了!"
 echo "=============================================="
 echo ""
-echo "次のコマンドで新しいサービスを追加:"
-echo "  bash new-service.sh <ドメイン名> [nextjs|static]"
+echo "★ 重要: SSH鍵の設定"
+echo "  sudo から抜けて ubuntu で実行:"
+echo "  ssh-keygen -t ed25519 -f ~/.ssh/deploy_key -N \"\""
+echo "  cat ~/.ssh/deploy_key.pub >> ~/.ssh/authorized_keys"
+echo "  chmod 600 ~/.ssh/authorized_keys"
+echo "  base64 -w 0 ~/.ssh/deploy_key && echo"
 echo ""
-echo "例:"
-echo "  bash new-service.sh example.com nextjs"
-echo "  bash new-service.sh example.com static"
+echo "  出力をGitHub Secrets の VPS_SSH_KEY に登録してください"
 echo ""
