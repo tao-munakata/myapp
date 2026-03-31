@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /home/ubuntu/myapp/scripts/auto-deploy.sh 2>&1",
+            "timeout": 600,
+            "statusMessage": "自動デプロイ中..."
+          }
+        ]
+      }
+    ]
+  }
+}
