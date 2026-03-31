@@ -44,7 +44,10 @@ jobs:
           cd /opt/services/manualine.tech
 
           if [ ! -d .git ]; then
-            git clone https://github.com/tao-munakata/myapp.git .
+            git init
+            git remote add origin https://github.com/tao-munakata/myapp.git
+            git fetch origin main
+            git reset --hard origin/main
           else
             git fetch origin main
             git reset --hard origin/main
