@@ -40,9 +40,8 @@ jobs:
           fi
 
           # コード取得（既存ディレクトリを削除して再クローン）
-          sudo rm -rf /opt/services/manualine.tech
-          sudo mkdir -p /opt/services/manualine.tech
-          sudo chown ubuntu:ubuntu /opt/services/manualine.tech
+          rm -rf /opt/services/manualine.tech
+          mkdir -p /opt/services/manualine.tech
           git clone https://github.com/tao-munakata/myapp.git /opt/services/manualine.tech
           cd /opt/services/manualine.tech
 
