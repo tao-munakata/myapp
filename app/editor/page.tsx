@@ -16,6 +16,7 @@ interface Annotation {
   y: number;
   label: string;
   mode: "arrow" | "circle" | "text";
+  description: string;
 }
 
 interface ProcessResult {
@@ -58,6 +59,7 @@ export default function EditorPage() {
         y: p.y,
         label: String(i + 1),
         mode: "circle",
+        description: "",
       }));
     setAnnotations(initial);
     setNextId(initial.length + 1);
@@ -201,6 +203,7 @@ export default function EditorPage() {
       y: pos.y,
       label: String(nextId),
       mode: tool === "text" ? "text" : tool,
+      description: "",
     };
     setAnnotations((prev) => [...prev, newAnnotation]);
     setNextId((n) => n + 1);
@@ -315,13 +318,27 @@ export default function EditorPage() {
       {annotations.length > 0 && (
         <div className="bg-white border-t border-slate-200 px-4 py-3">
           <p className="text-xs text-slate-500 mb-2 font-semibold">手順リスト</p>
-          <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
+          <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
             {annotations.map((a) => (
               <div key={a.id} className="flex items-center gap-2 text-sm">
                 <span className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">
                   {a.label}
                 </span>
-                <span className="text-slate-600">手順 {a.label}</span>
+                <input
+                  type="text"
+                  value={a.description}
+                  onChange={(e) =>
+                    setAnnotations((prev) =>
+                      prev.map((ann) =>
+                        ann.id === a.id
+                          ? { ...ann, description: e.target.value }
+                          : ann
+                      )
+                    )
+                  }
+                  placeholder={`手順 ${a.label} の説明を入力`}
+                  className="flex-1 border border-slate-200 rounded px-2 py-1 text-sm text-slate-700 focus:outline-none focus:border-blue-400"
+                />
               </div>
             ))}
           </div>
