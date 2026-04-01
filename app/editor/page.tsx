@@ -255,7 +255,7 @@ export default function EditorPage() {
   ];
 
   return (
-    <main className="min-h-screen bg-slate-100 flex flex-col">
+    <main className="h-screen bg-slate-100 flex flex-col overflow-hidden">
       {/* ヘッダー */}
       <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3">
         <button
@@ -303,7 +303,7 @@ export default function EditorPage() {
       </div>
 
       {/* キャンバス */}
-      <div className="flex-1 flex items-start justify-center p-4 overflow-auto">
+      <div className="flex-1 flex items-start justify-center p-4 overflow-auto min-h-0">
         <canvas
           ref={canvasRef}
           className="rounded-xl shadow-lg cursor-crosshair max-w-full"
