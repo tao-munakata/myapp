@@ -337,7 +337,7 @@ export default function EditorPage() {
                     )
                   }
                   placeholder={`手順 ${a.label} の説明を入力`}
-                  className="flex-1 border border-slate-200 rounded px-2 py-1 text-sm text-slate-700 focus:outline-none focus:border-blue-400"
+                  className="flex-1 bg-slate-100 border-2 border-slate-300 rounded px-2 py-1 text-sm text-slate-700 focus:outline-none focus:border-blue-500 focus:bg-white"
                 />
               </div>
             ))}
