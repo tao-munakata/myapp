@@ -1,8 +1,35 @@
+# 依存関係
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Next.js ビルド・キャッシュ出力
+.next/
+out/
+.swc/
+
+# 自動生成される TypeScript 型定義（Next.js が毎回再生成する）
+next-env.d.ts
+
+# 環境変数（機密情報を含む可能性があるため除外）
 .env
 .env.*
 !.env.example
-node_modules/
-.next/
-out/
+
+# ログ・キャッシュ
 *.log
-next-env.d.ts
+.cache
+coverage/
+.eslintcache
+.smux-bridge/
+logs/*.typescript
+logs/*.timing
+
+# OS 関連
+.DS_Store
+Thumbs.db
+
+# ビルド成果物
+dist/
+build/

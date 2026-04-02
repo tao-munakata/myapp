@@ -6,7 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "session:log": "bash scripts/start-logged-shell.sh",
+    "bridge:init": "node scripts/agent-bridge.mjs init",
+    "bridge:status": "node scripts/agent-bridge.mjs status",
+    "bridge:launch": "bash scripts/launch-agent-bridge.sh",
+    "bridge:launch:screen": "bash scripts/launch-agent-bridge.sh screen"
   },
   "dependencies": {
     "next": "16.2.1",
