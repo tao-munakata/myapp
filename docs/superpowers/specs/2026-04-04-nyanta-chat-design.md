@@ -33,6 +33,23 @@
 
 新規プロジェクト: `/home/ubuntu/nyanta-chat/`（既存のmanualineとは独立）
 
+### デプロイ構成
+
+`http://<サーバーIP>/nyanta/` でアクセスできるよう、Nginxをリバースプロキシとして導入する。
+
+```
+インターネット
+    │
+    ▼ :80
+  Nginx（新規導入）
+    ├── /          → manualine_frontend（内部ポート3000）
+    └── /nyanta/   → nyanta-chat（内部ポート3001）
+```
+
+- 既存の `myapp-app-1`（ポート80直結）は内部ポートに変更
+- nyanta-chat の Next.js は `basePath: '/nyanta'` を設定
+- Nginx は `/home/ubuntu/nginx/` に docker-compose で管理
+
 ### ディレクトリ構成
 
 ```
