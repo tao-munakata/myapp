@@ -42,7 +42,7 @@ nyanta-chat/
 │   ├── complete/page.tsx       # 完了・回答まとめ画面
 │   └── api/
 │       ├── chat/route.ts       # Claude API呼び出し（反応生成）
-│       └── session/route.ts    # セッション作成・回答保存
+│       └── session/route.ts    # セッション作成（POST）・回答保存（PUT）
 ├── components/
 │   ├── NyantaFace.tsx          # 猫顔SVGコンポーネント（表情切り替え）
 │   ├── ChatBubble.tsx          # チャットバブル（にゃん太 / ユーザー）
@@ -143,10 +143,14 @@ type Question = {
 ```ts
 {
   reaction: string      // 1〜2文の猫語リアクション
-  expression: Expression  // 猫の表情
+  expression: ClaudeExpression  // 猫の表情（Claudeが選択）
 }
 
-type Expression = 'welcome' | 'happy' | 'surprised' | 'serious' | 'thinking' | 'encouraging'
+// Claudeが返す表情（thinking はクライアント側で管理するため含まない）
+type ClaudeExpression = 'welcome' | 'happy' | 'surprised' | 'serious' | 'encouraging'
+
+// UI全体で使う表情（thinkingはAPI呼び出し中にクライアントがセット）
+type Expression = ClaudeExpression | 'thinking'
 ```
 
 **システムプロンプト方針:**
@@ -221,7 +225,7 @@ SVGコンポーネントとして実装（軽量・アニメーション対応�
 
 ```
 1. ユーザーがURLにアクセス
-2. セッションID（UUID）を発行 → sessionsテーブルに INSERT
+2. ページロード時にセッションID（UUID）を発行 → POST /api/session でsessionsテーブルにINSERT
 3. 質問1（questions.ts から）をチャットに表示
 4. ユーザーが回答を入力・送信
 5. POST /api/chat → Claude が猫語リアクション＋表情を生成
