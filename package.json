@@ -1,12 +1,16 @@
 {
   "name": "myapp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "ai:init": "bash scripts/init-plan-environment.sh",
+    "ai:status": "bash scripts/plan-status.sh",
+    "ai:doctor": "bash scripts/ai-doctor.sh",
+    "ai:tmux": "bash ./tmux-ai.sh",
     "session:log": "bash scripts/start-logged-shell.sh",
     "bridge:init": "node scripts/agent-bridge.mjs init",
     "bridge:status": "node scripts/agent-bridge.mjs status",
