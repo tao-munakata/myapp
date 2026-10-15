@@ -1,0 +1,1 @@
+Analysis layout: constrain grid and fixed-height chart wrappers. Add independent analysis cutoff sliders, filter saved 130 Hz samples before decimation. Default bypass. Saved data already 0.5–40 Hz filtered; disclose limitation. Validate numeric response, short/empty sessions, stale responses. Keep live settings and files unchanged.

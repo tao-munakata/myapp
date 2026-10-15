@@ -9,7 +9,8 @@ from typing import Set
 import numpy as np
 from scipy import signal as scipy_signal
 from bleak import BleakClient, BleakScanner
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from pydantic import BaseModel, Field
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 
@@ -45,6 +46,9 @@ _recorder = None
 _sos = scipy_signal.butter(4, [0.5, 40.0], btype="bandpass", fs=FS, output="sos")
 _zi  = scipy_signal.sosfilt_zi(_sos) * 0
 _mean_rr = 850.0
+_filter_settings = {"low_hz": 0.5, "high_hz": 40.0}
+_display_sos = _sos.copy()
+_display_zi = _zi.copy()
 
 
 # ── パーサ ────────────────────────────────────────────────────
@@ -277,7 +281,7 @@ async def _queue_bridge():
 
 async def _broadcast_worker():
     """asyncio キュー → WebSocket ブロードキャスト + 状態更新"""
-    global _mean_rr, _zi
+    global _mean_rr, _zi, _display_zi
     while True:
         msg = await _ws_queue.get()
         kind = msg.get("type")
@@ -298,9 +302,11 @@ async def _broadcast_worker():
             # サーバーサイドバンドパスフィルタ
             arr = np.array(msg["samples"], dtype=float)
             filt, _zi = scipy_signal.sosfilt(_sos, arr, zi=_zi)
-            msg["samples"] = [round(float(v), 1) for v in filt]
+            display, _display_zi = scipy_signal.sosfilt(
+                _display_sos, arr, zi=_display_zi)
+            msg["samples"] = [round(float(v), 1) for v in display]
             if _recorder:
-                _recorder.record_ecg(time.time(), msg["samples"])
+                _recorder.record_ecg(time.time(), [round(float(v), 1) for v in filt])
         elif kind == "gap":
             app_state["gap_count"] += 1
             msg["ts"] = datetime.now().strftime("%H:%M:%S")
@@ -309,9 +315,35 @@ async def _broadcast_worker():
 
 
 # ── REST API ──────────────────────────────────────────────────
+
+class FilterSettings(BaseModel):
+    low_hz: float = Field(ge=0.1, le=10.0, allow_inf_nan=False)
+    high_hz: float = Field(ge=15.0, le=60.0, allow_inf_nan=False)
+
+
+@app.get("/api/filter")
+async def api_filter():
+    return dict(_filter_settings)
+
+
+@app.post("/api/filter")
+async def api_set_filter(settings: FilterSettings):
+    global _display_sos, _display_zi, _filter_settings
+    new_settings = {"low_hz": settings.low_hz, "high_hz": settings.high_hz}
+    if new_settings != _filter_settings:
+        sos = scipy_signal.butter(
+            4, [settings.low_hz, settings.high_hz],
+            btype="bandpass", fs=FS, output="sos")
+        _display_sos = sos
+        _display_zi = scipy_signal.sosfilt_zi(sos) * 0
+        _filter_settings = new_settings
+        await manager.broadcast({"type": "filter", **new_settings})
+    return {"ok": True, **_filter_settings}
+
+
 @app.post("/api/start")
 async def api_start():
-    global _ble_worker, _recorder, _zi, _mean_rr
+    global _ble_worker, _recorder, _zi, _mean_rr, _display_zi
     if app_state["running"]:
         return {"ok": False, "msg": "すでに収集中"}
     app_state["running"] = True
@@ -319,6 +351,7 @@ async def api_start():
     app_state["session_start"] = time.time()
     _zi = scipy_signal.sosfilt_zi(_sos) * 0   # フィルタ状態リセット
     _mean_rr = 850.0
+    _display_zi = scipy_signal.sosfilt_zi(_display_sos) * 0
     _recorder = DataRecorder()
     _ble_worker = BLEWorker(_ble_queue)
     _ble_worker.start()
@@ -352,7 +385,7 @@ async def api_status():
         h, r = divmod(e, 3600)
         m, s = divmod(r, 60)
         elapsed = f"{h:02d}:{m:02d}:{s:02d}"
-    return {**app_state, "elapsed": elapsed}
+    return {**app_state, "elapsed": elapsed, "filter": dict(_filter_settings)}
 
 
 @app.get("/api/sessions")
@@ -407,19 +440,26 @@ async def api_session_hr(stem: str):
 
 
 @app.get("/api/session/{stem}/ecg")
-async def api_session_ecg(stem: str):
+async def api_session_ecg(stem: str,
+    low_hz: float = Query(default=None, ge=0.1, le=10.0),
+    high_hz: float = Query(default=None, ge=15.0, le=60.0)):
     path = DATA_DIR / f"ecg_{stem}.csv"
     if not path.exists():
         return JSONResponse({"error": "not found"}, status_code=404)
+    if (low_hz is None) != (high_hz is None):
+        return JSONResponse({"error": "Specify both cutoff frequencies"}, status_code=422)
     t_list, v_list = [], []
     with path.open() as f:
-        for i, row in enumerate(csv.DictReader(f)):
-            if i % 5 == 0:   # 130 Hz → 26 Hz ダウンサンプル
-                t_list.append(float(row["timestamp_sec"]))
-                v_list.append(float(row["ecg_uv"]))
-    # 保存データはすでにサーバーサイドでフィルタ済みのため再フィルタ不要
+        for row in csv.DictReader(f):
+            t_list.append(float(row["timestamp_sec"]))
+            v_list.append(float(row["ecg_uv"]))
+    if low_hz is not None and v_list:
+        sos = scipy_signal.butter(4, [low_hz, high_hz], btype="bandpass", fs=FS, output="sos")
+        zi = scipy_signal.sosfilt_zi(sos) * v_list[0]
+        filtered, _ = scipy_signal.sosfilt(sos, np.asarray(v_list), zi=zi)
+        v_list = filtered.tolist()
     t0 = t_list[0] if t_list else 0
-    return {"t": [round(t - t0, 3) for t in t_list], "ecg": v_list}
+    return {"t": [round(t - t0, 3) for t in t_list[::5]], "ecg": v_list[::5]}
 
 
 # ── WebSocket ─────────────────────────────────────────────────
@@ -436,6 +476,7 @@ async def websocket_endpoint(ws: WebSocket):
             "last_bpm": app_state["last_bpm"],
             "gap_count": app_state["gap_count"],
             "status": app_state["status"],
+            "filter": dict(_filter_settings),
         }
     }))
     try:

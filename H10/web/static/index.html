@@ -118,6 +118,51 @@
   #btn-refresh-data { margin-bottom: 12px; background: var(--bg2); color: var(--text);
                        border: 1px solid var(--border); border-radius: 6px;
                        padding: 6px 14px; cursor: pointer; font-size: 12px; }
+
+  /* Live charts must shrink with the viewport, independently of canvas size. */
+  #header { flex-wrap: wrap; }
+  #tab-live { min-width: 0; min-height: 0; }
+  #live-layout {
+    width: 100%; min-width: 0; flex: 1 0 auto;
+    grid-template-columns: minmax(0, 1fr) 220px;
+    grid-template-rows: auto repeat(3, minmax(min-content, 1fr));
+  }
+  #live-layout > .card { min-width: 0; }
+  #live-layout .chart-wrap { min-width: 0; max-width: 100%; }
+  #live-layout .chart-wrap canvas { max-width: 100%; }
+  #bpm-card > div { min-width: 0; overflow-wrap: anywhere; }
+  #gap-log { min-height: 0; overflow-wrap: anywhere; }
+  @media (max-width: 700px) {
+    #header { gap: 8px; padding: 8px; }
+    #header h1 { font-size: 16px; }
+    #live-layout { height: auto; grid-template-columns: minmax(0, 1fr);
+                   grid-template-rows: auto auto auto auto auto; }
+    #gap-card { grid-column: 1; grid-row: 5; max-height: 180px; }
+  }
+
+  #filter-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px;
+    padding: 8px 16px; background: var(--bg2); border-bottom: 1px solid var(--border);
+    flex-shrink: 0; }
+  #filter-controls label { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  #filter-controls input { width: 140px; max-width: 100%; accent-color: var(--cyan); }
+  #filter-controls output { min-width: 55px; font-variant-numeric: tabular-nums; }
+  #filter-status { font-size: 12px; color: var(--muted); }
+
+  #tab-analysis { min-width: 0; min-height: 0; }
+  #analysis-layout { width: 100%; min-width: 0; min-height: 0; grid-template-columns: 220px minmax(0, 1fr); flex: 1; }
+  #analysis-layout > *, #analysis-right > * { min-width: 0; min-height: 0; }
+  #analysis-right > * { flex-shrink: 0; }
+  #analysis-right .chart-wrap, #analysis-right canvas { max-width: 100%; }
+  #analysis-info { white-space: pre-line; overflow-wrap: anywhere; }
+  #analysis-filters { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; }
+  #analysis-filters label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  #analysis-filters input { width: 140px; max-width: 100%; accent-color: var(--cyan); }
+  #analysis-filter-note { flex-basis: 100%; color: var(--muted); font-size: 12px; }
+  @media (max-width: 700px) {
+    #analysis-layout { height: auto; grid-template-columns: minmax(0, 1fr); }
+    #session-list-panel { max-height: 160px; }
+    #analysis-right { overflow: visible; }
+  }
 </style>
 </head>
 <body>
@@ -136,14 +181,26 @@
   <button class="btn" id="btn-stop"  onclick="stopCollection()" disabled>■ 停止</button>
 </div>
 
+<div id="filter-controls" role="group" aria-label="ライブ ECG フィルター">
+  <label for="filter-low">低域カット
+    <input id="filter-low" type="range" min="0.1" max="10" step="0.1" value="0.5">
+    <output id="filter-low-value" for="filter-low">0.5 Hz</output>
+  </label>
+  <label for="filter-high">高域カット
+    <input id="filter-high" type="range" min="15" max="60" step="1" value="40">
+    <output id="filter-high-value" for="filter-high">40 Hz</output>
+  </label>
+  <span id="filter-status" role="status" aria-live="polite">ライブ表示に適用・保存は 0.5–40 Hz</span>
+</div>
+
 <!-- ギャップバナー -->
 <div id="gap-banner"></div>
 
 <!-- タブ -->
 <div id="tabs">
-  <button class="tab-btn active" onclick="showTab('live')">ライブ</button>
-  <button class="tab-btn" onclick="showTab('analysis')">解析</button>
-  <button class="tab-btn" onclick="showTab('data')">データ管理</button>
+  <button class="tab-btn active" onclick="showTab('live', this)">ライブ</button>
+  <button class="tab-btn" onclick="showTab('analysis', this)">解析</button>
+  <button class="tab-btn" onclick="showTab('data', this)">データ管理</button>
 </div>
 
 <!-- ライブタブ -->
@@ -170,7 +227,7 @@
 
     <!-- ECG -->
     <div class="card" id="ecg-card">
-      <div class="card-title">ECG — リアルタイム (0.5–40 Hz フィルタ済)</div>
+      <div class="card-title">ECG — リアルタイム (<span id="filter-band">0.5–40 Hz</span> フィルタ済)</div>
       <div class="chart-wrap" style="height:130px">
         <canvas id="ecg-canvas"></canvas>
       </div>
@@ -204,14 +261,21 @@
       <button id="btn-refresh-sessions" onclick="loadSessions()">更新</button>
     </div>
     <div id="analysis-right">
+      <div class="card" id="analysis-filters" role="group" aria-label="解析 ECG フィルター">
+        <label for="analysis-low">低域カット <input id="analysis-low" type="range" min="0.1" max="10" step="0.1" value="0.5"><output id="analysis-low-value" for="analysis-low">0.5 Hz</output></label>
+        <label for="analysis-high">高域カット <input id="analysis-high" type="range" min="15" max="60" step="1" value="40"><output id="analysis-high-value" for="analysis-high">40 Hz</output></label>
+        <button class="btn" id="analysis-original" type="button">保存波形に戻す</button>
+        <span id="analysis-filter-state" role="status" aria-live="polite">保存波形を表示</span>
+        <div id="analysis-filter-note">保存時に 0.5–40 Hz 処理済み。スライダーは追加フィルターです。除去済みの成分は復元できません。</div>
+      </div>
       <div id="analysis-info">セッションをクリックして解析</div>
       <div class="card">
         <div class="card-title">ECG（解析）</div>
-        <canvas id="an-ecg-canvas" style="height:200px"></canvas>
+        <div class="chart-wrap" style="height:200px"><canvas id="an-ecg-canvas"></canvas></div>
       </div>
       <div class="card">
         <div class="card-title">心拍数 / RR 間隔（解析）</div>
-        <canvas id="an-hr-canvas" style="height:160px"></canvas>
+        <div class="chart-wrap" style="height:160px"><canvas id="an-hr-canvas"></canvas></div>
       </div>
     </div>
   </div>
@@ -233,11 +297,12 @@
 // ─────────────────────────────────────────────────────────────
 // タブ切り替え
 // ─────────────────────────────────────────────────────────────
-function showTab(name) {
+function showTab(name, button) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
-  event.currentTarget.classList.add('active');
+  button.classList.add('active');
+  document.getElementById('filter-controls').style.display = name === 'live' ? 'flex' : 'none';
   if (name === 'analysis') loadSessions();
   if (name === 'data') loadDataTable();
 }
@@ -294,6 +359,60 @@ setInterval(() => {
   }
   ecgChart.update('none');
 }, 100);
+
+
+// Live filter settings are shared by all connected browsers.
+const filterLow = document.getElementById('filter-low');
+const filterHigh = document.getElementById('filter-high');
+const filterStatus = document.getElementById('filter-status');
+let filterTimer = null;
+let filterSending = false;
+let filterDirty = false;
+function showFilterValues() {
+  document.getElementById('filter-low-value').textContent = Number(filterLow.value).toFixed(1) + ' Hz';
+  document.getElementById('filter-high-value').textContent = Number(filterHigh.value) + ' Hz';
+}
+function applyFilterSettings(settings, clear = false) {
+  if (!settings) return;
+  if (!filterDirty && !filterSending) {
+    filterLow.value = settings.low_hz;
+    filterHigh.value = settings.high_hz;
+    showFilterValues();
+  }
+  document.getElementById('filter-band').textContent = settings.low_hz + '–' + settings.high_hz + ' Hz';
+  if (clear) {
+    ecgBuf.fill(null); ecgPending = [];
+    ecgChart.data.datasets[0].data = [...ecgBuf];
+    ecgChart.update('none');
+  }
+}
+async function sendFilterSettings() {
+  if (filterSending) return;
+  filterDirty = false; filterSending = true;
+  const settings = {low_hz: Number(filterLow.value), high_hz: Number(filterHigh.value)};
+  try {
+    const response = await fetch('/api/filter', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(settings),
+    });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const applied = await response.json();
+    applyFilterSettings(applied);
+    filterStatus.textContent = '適用済み・保存は 0.5–40 Hz';
+  } catch (error) {
+    filterStatus.textContent = '適用できませんでした。スライダーを操作して再試行してください';
+  } finally {
+    filterSending = false;
+    if (filterDirty) sendFilterSettings();
+  }
+}
+[filterLow, filterHigh].forEach(input => input.addEventListener('input', () => {
+  showFilterValues();
+  filterDirty = true;
+  filterStatus.textContent = '反映中…';
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(sendFilterSettings, 150);
+}));
 
 // ─────────────────────────────────────────────────────────────
 // Chart.js — HR
@@ -399,6 +518,7 @@ function handleMessage(msg) {
 
     case 'init': {
       const s = msg.state;
+      applyFilterSettings(s.filter);
       setConnected(s.connected);
       if (s.last_bpm) updateBPM(s.last_bpm);
       document.getElementById('gap-count').textContent = `欠落 ${s.gap_count}件`;
@@ -406,6 +526,10 @@ function handleMessage(msg) {
       if (s.battery !== null) updateBattery(s.battery);
       break;
     }
+
+    case 'filter':
+      applyFilterSettings(msg, true);
+      break;
 
     case 'connected':
       setConnected(msg.value);
@@ -541,6 +665,31 @@ async function stopCollection() {
 // ─────────────────────────────────────────────────────────────
 let anEcgChart = null, anHrChart = null;
 let selectedStem = null;
+let analysisRequest = 0, analysisFilterEnabled = false, analysisFilterTimer = null;
+const analysisLow = document.getElementById('analysis-low');
+const analysisHigh = document.getElementById('analysis-high');
+const analysisFilterState = document.getElementById('analysis-filter-state');
+[analysisLow, analysisHigh].forEach(input => input.addEventListener('input', () => {
+  analysisFilterEnabled = true; ++analysisRequest;
+  document.getElementById('analysis-low-value').textContent = Number(analysisLow.value).toFixed(1) + ' Hz';
+  document.getElementById('analysis-high-value').textContent = Number(analysisHigh.value) + ' Hz';
+  analysisFilterState.textContent = selectedStem ? '反映中…' : 'セッションを選択してください';
+  clearTimeout(analysisFilterTimer);
+  if (selectedStem) analysisFilterTimer = setTimeout(() => analyzeSession(selectedStem), 200);
+}));
+document.getElementById('analysis-original').addEventListener('click', () => {
+  clearTimeout(analysisFilterTimer); ++analysisRequest; analysisFilterEnabled = false;
+  analysisFilterState.textContent = '保存波形を表示';
+  if (selectedStem) analyzeSession(selectedStem);
+});
+function dataExtent(values, fallbackMin, fallbackMax) {
+  let min = Infinity, max = -Infinity;
+  for (const value of values) {
+    if (Number.isFinite(value)) { min = Math.min(min, value); max = Math.max(max, value); }
+  }
+  return min === Infinity ? [fallbackMin, fallbackMax] : [min, max];
+}
+
 
 function stemToJST(stem) {
   // "20261015T093547Z" → JST 表示
@@ -576,20 +725,26 @@ async function loadSessions() {
 
 async function analyzeSession(stem) {
   selectedStem = stem;
+  const requestId = ++analysisRequest;
+  const filterLabel = analysisFilterEnabled ? '追加フィルター ' + analysisLow.value + '–' + analysisHigh.value + ' Hz' : '保存波形を表示';
+  const query = analysisFilterEnabled ? '?low_hz=' + analysisLow.value + '&high_hz=' + analysisHigh.value : '';
+  try {
   document.getElementById('analysis-info').textContent = '読み込み中...';
 
   const [ecgRes, hrRes] = await Promise.all([
-    fetch(`/api/session/${stem}/ecg`),
+    fetch(`/api/session/${stem}/ecg${query}`),
     fetch(`/api/session/${stem}/hr`),
   ]);
+  if (!ecgRes.ok || !hrRes.ok) throw new Error("データを取得できません");
   const ecgData = await ecgRes.json();
   const hrData2 = await hrRes.json();
+  if (requestId !== analysisRequest) return;
+  analysisFilterState.textContent = filterLabel;
 
   // ECG グラフ — Y軸を実データに合わせて自動調整
   const ecgCtx = document.getElementById('an-ecg-canvas');
   if (anEcgChart) { anEcgChart.destroy(); }
-  const ecgMin = Math.min(...ecgData.ecg);
-  const ecgMax = Math.max(...ecgData.ecg);
+  const [ecgMin, ecgMax] = dataExtent(ecgData.ecg, -100, 100);
   const ecgPad = (ecgMax - ecgMin) * 0.1 || 100;
   anEcgChart = new Chart(ecgCtx, {
     type: 'line',
@@ -624,10 +779,10 @@ async function analyzeSession(stem) {
   const rrColors2 = rr.map(v => v > meanRR2 * 1.5 ? '#ef4444' : '#3b82f6');
 
   // HR と RR を別々の Y 軸で（X軸はそれぞれの拍インデックス / 経過秒）
-  const hrMin = Math.min(...hrData2.hr) - 5;
-  const hrMax = Math.max(...hrData2.hr) + 5;
-  const rrMin = rr.length ? Math.min(...rr) - 50 : 400;
-  const rrMax = rr.length ? Math.max(...rr) + 50 : 1200;
+  const [hrLow, hrHigh] = dataExtent(hrData2.hr, 40, 100);
+  const [rrLow, rrHigh] = dataExtent(rr, 450, 1150);
+  const hrMin = hrLow - 5, hrMax = hrHigh + 5;
+  const rrMin = rrLow - 50, rrMax = rrHigh + 50;
 
   anHrChart = new Chart(hrCtx, {
     type: 'line',
@@ -688,6 +843,11 @@ async function analyzeSession(stem) {
     info += `\n欠落候補 (RR > ${(meanRR2*1.5).toFixed(0)}ms): ${gaps} 件`;
   }
   document.getElementById('analysis-info').textContent = info;
+  } catch (error) {
+    if (requestId !== analysisRequest) return;
+    document.getElementById('analysis-info').textContent = '読み込みに失敗しました。セッションを再選択してください。';
+    analysisFilterState.textContent = '反映できませんでした';
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -747,6 +907,7 @@ connectWS();
 window.addEventListener('load', async () => {
   const res = await fetch('/api/status');
   const s = await res.json();
+  applyFilterSettings(s.filter);
   if (s.running) {
     document.getElementById('btn-start').disabled = true;
     document.getElementById('btn-stop').disabled = false;
