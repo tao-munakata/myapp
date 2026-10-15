@@ -16,6 +16,46 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Flask API
+
+This repository also includes a small Flask API under `backend/`.
+
+### Run locally with Python
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r backend/requirements.txt
+python3 backend/app.py
+```
+
+The API will be available at [http://localhost:5000](http://localhost:5000).
+
+Endpoints:
+
+- `GET /api/health`
+- `POST /api/echo`
+
+Example:
+
+```bash
+curl http://localhost:5000/api/health
+curl -X POST http://localhost:5000/api/echo \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello"}'
+```
+
+### Run with Docker Compose
+
+```bash
+docker compose up --build
+```
+
+This starts:
+
+- Next.js on [http://localhost:3000](http://localhost:3000)
+- Flask API on [http://localhost:5000](http://localhost:5000)
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
@@ -167,3 +207,59 @@ Important limitation:
 Current work summary is saved in:
 
 - `docs/WORKLOG.md`
+
+## Claude + Codex Plan Workflow
+
+This repository now includes a `plan/` based collaboration setup for a simple split:
+
+- Claude designs
+- Codex implements
+
+The shared files are:
+
+- `plan/TASK.md`
+- `plan/ARCHITECTURE.md`
+- `plan/IMPLEMENTATION.md`
+- `plan/WORKLOG.md`
+- `plan/HANDOFF.md`
+
+### Quick Start
+
+Run the environment checks and initialization:
+
+```bash
+npm run ai:doctor
+npm run ai:init
+```
+
+Check current state at any time:
+
+```bash
+npm run ai:status
+```
+
+Start the prepared tmux session:
+
+```bash
+npm run ai:tmux
+```
+
+This opens three panes:
+
+- Claude pane for planning
+- Codex pane for implementation
+- Shell pane for status and test commands
+
+### Recommended Operating Order
+
+1. Claude fills `plan/TASK.md`
+2. Claude fills `plan/ARCHITECTURE.md`
+3. Claude writes step-by-step work in `plan/IMPLEMENTATION.md`
+4. Codex implements and updates `plan/WORKLOG.md`
+5. Final status and next steps go into `plan/HANDOFF.md`
+
+### Beginner Notes
+
+- If `npm run ai:doctor` reports missing `claude` or `codex`, install those CLIs first.
+- If `tmux` is missing, install it and rerun `npm run ai:tmux`.
+- `npm run ai:init` is safe to rerun. It verifies required files and initializes `.smux-bridge/`.

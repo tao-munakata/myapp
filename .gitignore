@@ -25,6 +25,9 @@ coverage/
 .smux-bridge/
 logs/*.typescript
 logs/*.timing
+__pycache__/
+*.pyc
+.venv/
 
 # OS 関連
 .DS_Store
@@ -33,3 +36,6 @@ Thumbs.db
 # ビルド成果物
 dist/
 build/
+
+# Music downloader output
+music/output/
