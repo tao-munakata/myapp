@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🫀 Polar H10 Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f172a; --bg2: #1e293b; --bg3: #0f172a;
+    --text: #f1f5f9; --muted: #94a3b8;
+    --cyan: #06b6d4; --red: #ef4444; --green: #22c55e;
+    --yellow: #f59e0b; --blue: #3b82f6;
+    --border: #334155;
+  }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif;
+         font-size: 14px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* ── ヘッダー ── */
+  #header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 16px; background: var(--bg2);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  #header h1 { font-size: 18px; font-weight: 700; white-space: nowrap; }
+  #conn-dot { font-size: 20px; }
+  #bpm-display { font-size: 36px; font-weight: 800; color: var(--red);
+                 min-width: 90px; text-align: right; line-height: 1; }
+  #bpm-unit { font-size: 13px; color: var(--muted); align-self: flex-end; padding-bottom: 4px; }
+  .spacer { flex: 1; }
+  #battery-lbl, #session-lbl { font-size: 13px; color: var(--muted); white-space: nowrap; }
+  #gap-count { font-size: 14px; font-weight: 700; color: var(--yellow); min-width: 70px; }
+
+  .btn {
+    border: none; border-radius: 6px; padding: 8px 18px;
+    font-size: 14px; font-weight: 700; cursor: pointer; white-space: nowrap;
+  }
+  #btn-start { background: #16a34a; color: white; }
+  #btn-stop  { background: #dc2626; color: white; }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+
+  /* ── ギャップバナー ── */
+  #gap-banner {
+    display: none; background: #7f1d1d; color: #fef2f2;
+    text-align: center; padding: 8px; font-size: 16px; font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  /* ── タブ ── */
+  #tabs { display: flex; border-bottom: 1px solid var(--border);
+          background: var(--bg2); flex-shrink: 0; }
+  .tab-btn {
+    padding: 10px 24px; border: none; background: none;
+    color: var(--muted); font-size: 14px; cursor: pointer; border-bottom: 2px solid transparent;
+  }
+  .tab-btn.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+
+  /* ── タブコンテンツ ── */
+  .tab-panel { display: none; flex: 1; overflow: auto; }
+  .tab-panel.active { display: flex; flex-direction: column; }
+
+  /* ── ライブタブ ── */
+  #live-layout { display: grid; grid-template-columns: 1fr 220px;
+                 grid-template-rows: auto 1fr 1fr 1fr; gap: 8px;
+                 padding: 8px; height: 100%; }
+  .card { background: var(--bg2); border: 1px solid var(--border);
+          border-radius: 8px; padding: 10px; }
+  .card-title { font-size: 11px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .05em; }
+
+  #bpm-card { grid-column: 1; grid-row: 1; display: flex; align-items: center; gap: 16px; }
+  #bpm-big { font-size: 64px; font-weight: 900; color: var(--red); line-height: 1; }
+  #bpm-sub { color: var(--muted); font-size: 13px; }
+  #status-text { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  #gap-card { grid-column: 2; grid-row: 1 / 5; overflow: hidden;
+              display: flex; flex-direction: column; }
+  #gap-log { overflow-y: auto; flex: 1; font-size: 11px; font-family: monospace; }
+  .gap-item { color: var(--red); padding: 3px 0; border-bottom: 1px solid var(--border); }
+
+  #ecg-card { grid-column: 1; grid-row: 2; }
+  #hr-card  { grid-column: 1; grid-row: 3; }
+  #rr-card  { grid-column: 1; grid-row: 4; }
+
+  .chart-wrap { position: relative; width: 100%; }
+  .chart-wrap canvas { position: absolute; top: 0; left: 0; }
+
+  /* ── 解析タブ ── */
+  #analysis-layout { display: grid; grid-template-columns: 220px 1fr;
+                     gap: 8px; padding: 8px; height: 100%; }
+  #session-list-panel { background: var(--bg2); border: 1px solid var(--border);
+                        border-radius: 8px; padding: 10px; overflow-y: auto; }
+  #session-list-panel h3 { font-size: 12px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; }
+  .session-item {
+    padding: 8px; border-radius: 6px; cursor: pointer; margin-bottom: 4px;
+    border: 1px solid transparent; font-size: 12px; font-family: monospace;
+  }
+  .session-item:hover { background: var(--bg3); border-color: var(--border); }
+  .session-item.selected { border-color: var(--cyan); background: rgba(6,182,212,.1); }
+  .session-meta { font-size: 10px; color: var(--muted); }
+  #analysis-right { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  #analysis-info { background: var(--bg2); border: 1px solid var(--border);
+                   border-radius: 8px; padding: 12px; font-size: 13px; font-family: monospace; line-height: 1.8; }
+  #btn-refresh-sessions { margin-top: 8px; width: 100%; background: var(--bg3);
+                           color: var(--text); border: 1px solid var(--border);
+                           border-radius: 6px; padding: 6px; cursor: pointer; font-size: 12px; }
+
+  /* ── データ管理タブ ── */
+  #data-layout { padding: 12px; overflow-y: auto; }
+  #data-layout h2 { margin-bottom: 12px; font-size: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: var(--bg2); color: var(--muted); padding: 8px 12px;
+       text-align: left; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; }
+  td { padding: 8px 12px; border-bottom: 1px solid #1e293b; }
+  tr:hover td { background: var(--bg2); }
+  .kind-ecg { color: var(--cyan); }
+  .kind-hr  { color: var(--red); }
+  #btn-refresh-data { margin-bottom: 12px; background: var(--bg2); color: var(--text);
+                       border: 1px solid var(--border); border-radius: 6px;
+                       padding: 6px 14px; cursor: pointer; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<!-- ヘッダー -->
+<div id="header">
+  <h1>🫀 H10 Monitor</h1>
+  <span id="conn-dot">◉</span>
+  <div id="bpm-display">--</div>
+  <div id="bpm-unit">bpm</div>
+  <div class="spacer"></div>
+  <div id="battery-lbl">🔋 --</div>
+  <div id="gap-count">欠落 0件</div>
+  <div id="session-lbl">--:--:--</div>
+  <button class="btn" id="btn-start" onclick="startCollection()">▶ 開始</button>
+  <button class="btn" id="btn-stop"  onclick="stopCollection()" disabled>■ 停止</button>
+</div>
+
+<!-- ギャップバナー -->
+<div id="gap-banner"></div>
+
+<!-- タブ -->
+<div id="tabs">
+  <button class="tab-btn active" onclick="showTab('live')">ライブ</button>
+  <button class="tab-btn" onclick="showTab('analysis')">解析</button>
+  <button class="tab-btn" onclick="showTab('data')">データ管理</button>
+</div>
+
+<!-- ライブタブ -->
+<div id="tab-live" class="tab-panel active">
+  <div id="live-layout">
+
+    <!-- BPM + ステータス -->
+    <div class="card" id="bpm-card">
+      <div>
+        <div id="bpm-big">--</div>
+        <div id="bpm-sub">bpm</div>
+      </div>
+      <div>
+        <div id="status-text">停止中</div>
+        <div id="conn-status" style="font-size:12px;margin-top:4px;color:#6b7280">◉ 未接続</div>
+      </div>
+    </div>
+
+    <!-- 欠落ログ -->
+    <div class="card" id="gap-card">
+      <div class="card-title">⚠ 欠落ログ</div>
+      <div id="gap-log"><div style="color:var(--muted);font-size:11px">欠落なし</div></div>
+    </div>
+
+    <!-- ECG -->
+    <div class="card" id="ecg-card">
+      <div class="card-title">ECG — リアルタイム (0.5–40 Hz フィルタ済)</div>
+      <div class="chart-wrap" style="height:130px">
+        <canvas id="ecg-canvas"></canvas>
+      </div>
+    </div>
+
+    <!-- HR -->
+    <div class="card" id="hr-card">
+      <div class="card-title">心拍数 — 直近5分</div>
+      <div class="chart-wrap" style="height:90px">
+        <canvas id="hr-canvas"></canvas>
+      </div>
+    </div>
+
+    <!-- RR -->
+    <div class="card" id="rr-card">
+      <div class="card-title">RR 間隔 — 直近80拍  （× = 異常拍）</div>
+      <div class="chart-wrap" style="height:90px">
+        <canvas id="rr-canvas"></canvas>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- 解析タブ -->
+<div id="tab-analysis" class="tab-panel">
+  <div id="analysis-layout">
+    <div id="session-list-panel">
+      <h3>セッション</h3>
+      <div id="session-list"></div>
+      <button id="btn-refresh-sessions" onclick="loadSessions()">更新</button>
+    </div>
+    <div id="analysis-right">
+      <div id="analysis-info">セッションをクリックして解析</div>
+      <div class="card">
+        <div class="card-title">ECG（解析）</div>
+        <canvas id="an-ecg-canvas" style="height:200px"></canvas>
+      </div>
+      <div class="card">
+        <div class="card-title">心拍数 / RR 間隔（解析）</div>
+        <canvas id="an-hr-canvas" style="height:160px"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- データ管理タブ -->
+<div id="tab-data" class="tab-panel">
+  <div id="data-layout">
+    <h2>保存データ一覧</h2>
+    <button id="btn-refresh-data" onclick="loadDataTable()">更新</button>
+    <table>
+      <thead><tr><th>セッション日時 (JST)</th><th>ECG</th><th>HR</th><th>合計</th><th>更新日時</th><th></th></tr></thead>
+      <tbody id="data-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+// タブ切り替え
+// ─────────────────────────────────────────────────────────────
+function showTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  event.currentTarget.classList.add('active');
+  if (name === 'analysis') loadSessions();
+  if (name === 'data') loadDataTable();
+}
+
+// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// Chart.js — ECG リアルタイム (ローリングバッファ)
+// ─────────────────────────────────────────────────────────────
+const ECG_BUF = 260;   // 10秒 × 26Hz 表示
+const ecgBuf = new Array(ECG_BUF).fill(null);
+let ecgPending = [];   // WebSocket から積まれたサンプル
+
+const ecgChart = new Chart(document.getElementById('ecg-canvas'), {
+  type: 'line',
+  data: {
+    labels: ecgBuf.map((_, i) => i),
+    datasets: [{
+      data: [...ecgBuf],
+      borderColor: '#06b6d4',
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0,
+      spanGaps: false,
+    }]
+  },
+  options: {
+    animation: false,
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { display: false },
+      y: { ticks: { color: '#94a3b8', maxTicksLimit: 5 },
+           grid: { color: '#1e293b' } }
+    }
+  }
+});
+
+// 100ms ごとに pending サンプルをバッファに反映して描画
+setInterval(() => {
+  if (!ecgPending.length) return;
+  // 5サンプルに1つ取る (130Hz→26Hz)
+  const ds = ecgPending.filter((_, i) => i % 5 === 0);
+  ecgPending = [];
+  ecgBuf.splice(0, ds.length);
+  ecgBuf.push(...ds);
+  ecgChart.data.datasets[0].data = [...ecgBuf];
+  // Y軸を実データに自動フィット
+  const vals = ecgBuf.filter(v => v !== null);
+  if (vals.length) {
+    const mn = Math.min(...vals), mx = Math.max(...vals), pad = (mx - mn) * 0.1 || 50;
+    ecgChart.options.scales.y.min = mn - pad;
+    ecgChart.options.scales.y.max = mx + pad;
+  }
+  ecgChart.update('none');
+}, 100);
+
+// ─────────────────────────────────────────────────────────────
+// Chart.js — HR
+// ─────────────────────────────────────────────────────────────
+const HR_MAX = 300;
+let hrData = [], hrLabels = [];
+
+const hrChart = new Chart(document.getElementById('hr-canvas'), {
+  type: 'line',
+  data: {
+    labels: hrLabels,
+    datasets: [{
+      data: hrData,
+      borderColor: '#ef4444',
+      borderWidth: 2,
+      pointRadius: 2,
+      pointBackgroundColor: '#ef4444',
+      tension: 0.3,
+      fill: false,
+    }]
+  },
+  options: {
+    animation: false, responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { display: false },
+      y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } }
+    }
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Chart.js — RR
+// ─────────────────────────────────────────────────────────────
+const RR_MAX = 80;
+let rrData = [], rrColors = [];
+let meanRR = 850;
+
+const rrChart = new Chart(document.getElementById('rr-canvas'), {
+  type: 'bar',
+  data: {
+    labels: Array.from({length: RR_MAX}, (_, i) => i),
+    datasets: [{
+      data: rrData,
+      backgroundColor: rrColors,
+      borderWidth: 0,
+      barPercentage: 0.8,
+    }]
+  },
+  options: {
+    animation: false, responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { display: false },
+      y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } }
+    }
+  }
+});
+
+function pushRR(rr) {
+  if (rrData.length >= RR_MAX) { rrData.shift(); rrColors.shift(); }
+  const isGap = rr > meanRR * 1.5;
+  rrData.push(rr);
+  rrColors.push(isGap ? '#ef4444' : '#3b82f6');
+  rrChart.data.datasets[0].data = [...rrData];
+  rrChart.data.datasets[0].backgroundColor = [...rrColors];
+  rrChart.update('none');
+}
+
+// ─────────────────────────────────────────────────────────────
+// WebSocket
+// ─────────────────────────────────────────────────────────────
+let ws = null;
+let wsRetryTimer = null;
+let gapBannerTimer = null;
+let sessionTimer = null;
+let sessionStart = null;
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+  ws.onopen = () => {
+    console.log('WebSocket connected');
+    if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; }
+  };
+
+  ws.onclose = () => {
+    console.log('WebSocket closed — retry in 3s');
+    wsRetryTimer = setTimeout(connectWS, 3000);
+  };
+
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    handleMessage(msg);
+  };
+}
+
+function handleMessage(msg) {
+  switch (msg.type) {
+
+    case 'init': {
+      const s = msg.state;
+      setConnected(s.connected);
+      if (s.last_bpm) updateBPM(s.last_bpm);
+      document.getElementById('gap-count').textContent = `欠落 ${s.gap_count}件`;
+      document.getElementById('status-text').textContent = s.status;
+      if (s.battery !== null) updateBattery(s.battery);
+      break;
+    }
+
+    case 'connected':
+      setConnected(msg.value);
+      break;
+
+    case 'status':
+      document.getElementById('status-text').textContent = msg.text;
+      break;
+
+    case 'battery':
+      updateBattery(msg.pct);
+      break;
+
+    case 'hr': {
+      updateBPM(msg.bpm);
+      // HR chart update
+      const now = new Date().toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+      if (hrData.length >= HR_MAX) { hrData.shift(); hrLabels.shift(); }
+      hrData.push(msg.bpm);
+      hrLabels.push(now);
+      hrChart.data.labels = [...hrLabels];
+      hrChart.data.datasets[0].data = [...hrData];
+      hrChart.update('none');
+      // RR
+      if (msg.rr && msg.rr.length) {
+        msg.rr.forEach(rr => {
+          meanRR = 0.9 * meanRR + 0.1 * rr;
+          pushRR(rr);
+        });
+      }
+      break;
+    }
+
+    case 'ecg':
+      ecgPending.push(...msg.samples);
+      break;
+
+    case 'gap': {
+      const gapCount = parseInt(document.getElementById('gap-count').textContent.replace(/[^0-9]/g, '')) + 1;
+      document.getElementById('gap-count').textContent = `欠落 ${gapCount}件`;
+
+      // バナー
+      const banner = document.getElementById('gap-banner');
+      const label = msg.gtype === '心拍停止'
+        ? `🔴 心拍停止  ${msg.gap_sec}s`
+        : `⚠ ${msg.gtype}`;
+      banner.textContent = label;
+      banner.style.background = msg.gtype === '心拍停止' ? '#7f1d1d' : '#78350f';
+      banner.style.display = 'block';
+      if (gapBannerTimer) clearTimeout(gapBannerTimer);
+      gapBannerTimer = setTimeout(() => { banner.style.display = 'none'; }, 6000);
+
+      // ログ
+      const log = document.getElementById('gap-log');
+      const ts = msg.ts || new Date().toLocaleTimeString('ja-JP');
+      const item = document.createElement('div');
+      item.className = 'gap-item';
+      item.textContent = `${ts}  ${msg.gtype}` + (msg.gap_sec > 0 ? `  (${msg.gap_sec}s)` : '');
+      // 最初の "欠落なし" を削除
+      if (log.querySelector('[style]')) log.innerHTML = '';
+      log.insertBefore(item, log.firstChild);
+      break;
+    }
+  }
+}
+
+function setConnected(val) {
+  const dot = document.getElementById('conn-dot');
+  const lbl = document.getElementById('conn-status');
+  if (val) {
+    dot.style.color = '#22c55e';
+    lbl.textContent = '◉ 接続済み';
+    lbl.style.color = '#22c55e';
+  } else {
+    dot.style.color = '#ef4444';
+    lbl.textContent = '◉ 切断';
+    lbl.style.color = '#ef4444';
+  }
+}
+
+function updateBPM(bpm) {
+  document.getElementById('bpm-display').textContent = bpm;
+  document.getElementById('bpm-big').textContent = bpm;
+}
+
+function updateBattery(pct) {
+  const icon = pct > 20 ? '🔋' : '🪫';
+  document.getElementById('battery-lbl').textContent = `${icon} ${pct}%`;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 収集制御
+// ─────────────────────────────────────────────────────────────
+async function startCollection() {
+  const res = await fetch('/api/start', {method: 'POST'});
+  const data = await res.json();
+  if (data.ok) {
+    document.getElementById('btn-start').disabled = true;
+    document.getElementById('btn-stop').disabled = false;
+    document.getElementById('gap-log').innerHTML = '<div style="color:var(--muted);font-size:11px">欠落なし</div>';
+    document.getElementById('gap-count').textContent = '欠落 0件';
+    hrData = []; hrLabels = [];
+    rrData = []; rrColors = [];
+    ecgBuf.fill(null); ecgPending = [];
+    meanRR = 850;
+    // セッションタイマー
+    sessionStart = Date.now();
+    if (sessionTimer) clearInterval(sessionTimer);
+    sessionTimer = setInterval(() => {
+      const e = Math.floor((Date.now() - sessionStart) / 1000);
+      const h = String(Math.floor(e/3600)).padStart(2,'0');
+      const m = String(Math.floor((e%3600)/60)).padStart(2,'0');
+      const s = String(e%60).padStart(2,'0');
+      document.getElementById('session-lbl').textContent = `${h}:${m}:${s}`;
+    }, 1000);
+  } else {
+    alert(data.msg);
+  }
+}
+
+async function stopCollection() {
+  const res = await fetch('/api/stop', {method: 'POST'});
+  const data = await res.json();
+  if (data.ok) {
+    document.getElementById('btn-start').disabled = false;
+    document.getElementById('btn-stop').disabled = true;
+    if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null; }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 解析タブ
+// ─────────────────────────────────────────────────────────────
+let anEcgChart = null, anHrChart = null;
+let selectedStem = null;
+
+function stemToJST(stem) {
+  // "20261015T093547Z" → JST 表示
+  const y=stem.slice(0,4), mo=stem.slice(4,6), d=stem.slice(6,8);
+  const h=stem.slice(9,11), mi=stem.slice(11,13), s=stem.slice(13,15);
+  const dt = new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}Z`);
+  return dt.toLocaleString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', second:'2-digit',
+  });
+}
+
+async function loadSessions() {
+  const res = await fetch('/api/sessions');
+  const sessions = await res.json();
+  const list = document.getElementById('session-list');
+  list.innerHTML = '';
+  sessions.forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'session-item';
+    div.innerHTML = `<div>${stemToJST(s.stem)}</div>
+                     <div class="session-meta">${s.size_kb} KB</div>`;
+    div.onclick = () => {
+      document.querySelectorAll('.session-item').forEach(d => d.classList.remove('selected'));
+      div.classList.add('selected');
+      analyzeSession(s.stem);
+    };
+    list.appendChild(div);
+  });
+  if (!sessions.length) list.innerHTML = '<div style="color:var(--muted);font-size:12px">データなし</div>';
+}
+
+async function analyzeSession(stem) {
+  selectedStem = stem;
+  document.getElementById('analysis-info').textContent = '読み込み中...';
+
+  const [ecgRes, hrRes] = await Promise.all([
+    fetch(`/api/session/${stem}/ecg`),
+    fetch(`/api/session/${stem}/hr`),
+  ]);
+  const ecgData = await ecgRes.json();
+  const hrData2 = await hrRes.json();
+
+  // ECG グラフ — Y軸を実データに合わせて自動調整
+  const ecgCtx = document.getElementById('an-ecg-canvas');
+  if (anEcgChart) { anEcgChart.destroy(); }
+  const ecgMin = Math.min(...ecgData.ecg);
+  const ecgMax = Math.max(...ecgData.ecg);
+  const ecgPad = (ecgMax - ecgMin) * 0.1 || 100;
+  anEcgChart = new Chart(ecgCtx, {
+    type: 'line',
+    data: {
+      labels: ecgData.t,
+      datasets: [{
+        data: ecgData.ecg,
+        borderColor: '#06b6d4',
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0,
+      }]
+    },
+    options: {
+      animation: false, responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#94a3b8', maxTicksLimit: 10,
+                       callback: v => ecgData.t[v] !== undefined ? ecgData.t[v].toFixed(0)+'s' : '' },
+             grid: { color: '#1e293b' } },
+        y: { min: ecgMin - ecgPad, max: ecgMax + ecgPad,
+             ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } }
+      }
+    }
+  });
+
+  // HR グラフ（時系列）
+  const hrCtx = document.getElementById('an-hr-canvas');
+  if (anHrChart) { anHrChart.destroy(); }
+  const rr = hrData2.rr || [];
+  const meanRR2 = rr.length ? rr.reduce((a, b) => a + b, 0) / rr.length : 850;
+  const rrColors2 = rr.map(v => v > meanRR2 * 1.5 ? '#ef4444' : '#3b82f6');
+
+  // HR と RR を別々の Y 軸で（X軸はそれぞれの拍インデックス / 経過秒）
+  const hrMin = Math.min(...hrData2.hr) - 5;
+  const hrMax = Math.max(...hrData2.hr) + 5;
+  const rrMin = rr.length ? Math.min(...rr) - 50 : 400;
+  const rrMax = rr.length ? Math.max(...rr) + 50 : 1200;
+
+  anHrChart = new Chart(hrCtx, {
+    type: 'line',
+    data: {
+      labels: hrData2.t.map(t => t.toFixed(0) + 's'),
+      datasets: [
+        {
+          label: 'HR (bpm)',
+          data: hrData2.hr,
+          borderColor: '#ef4444',
+          borderWidth: 2,
+          pointRadius: 2,
+          pointBackgroundColor: '#ef4444',
+          tension: 0.3,
+          yAxisID: 'yHR',
+        },
+        {
+          label: 'RR (ms)',
+          data: rrColors2.map((c, i) => ({ x: i, y: rr[i] })),
+          borderColor: '#3b82f6',
+          borderWidth: 1.5,
+          pointBackgroundColor: rrColors2,
+          pointRadius: 4,
+          showLine: true,
+          tension: 0,
+          yAxisID: 'yRR',
+          type: 'scatter',
+          xAxisID: 'xRR',
+        }
+      ]
+    },
+    options: {
+      animation: false, responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12 } } },
+      scales: {
+        x:   { ticks: { color: '#94a3b8', maxTicksLimit: 8 }, grid: { color: '#1e293b' } },
+        xRR: { display: false, type: 'linear', min: 0, max: rr.length },
+        yHR: { position: 'left',  min: hrMin, max: hrMax,
+                ticks: { color: '#ef4444' }, grid: { color: '#1e293b' },
+                title: { display: true, text: 'bpm', color: '#ef4444' } },
+        yRR: { position: 'right', min: rrMin, max: rrMax,
+                ticks: { color: '#3b82f6' }, grid: { display: false },
+                title: { display: true, text: 'ms', color: '#3b82f6' } },
+      }
+    }
+  });
+
+  // 統計
+  const n = rr.length;
+  let info = `ECG: ${ecgData.ecg.length} samples (${ecgData.t[ecgData.t.length-1]?.toFixed(1)}s)`;
+  if (n >= 2) {
+    const diffs = rr.slice(1).map((v, i) => v - rr[i]);
+    const rmssd = Math.sqrt(diffs.reduce((s, d) => s + d*d, 0) / diffs.length);
+    const sdnn = Math.sqrt(rr.reduce((s, v) => s + (v - meanRR2)**2, 0) / (n - 1));
+    const gaps = rr.filter(v => v > meanRR2 * 1.5).length;
+    info += `\nHR: ${hrData2.hr.length ? Math.round(hrData2.hr.reduce((a,b)=>a+b,0)/hrData2.hr.length) : '--'} bpm (mean)`;
+    info += `\nRR: ${meanRR2.toFixed(1)} ms (mean)   SDNN: ${sdnn.toFixed(1)} ms   RMSSD: ${rmssd.toFixed(1)} ms`;
+    info += `\n欠落候補 (RR > ${(meanRR2*1.5).toFixed(0)}ms): ${gaps} 件`;
+  }
+  document.getElementById('analysis-info').textContent = info;
+}
+
+// ─────────────────────────────────────────────────────────────
+// データ管理タブ
+// ─────────────────────────────────────────────────────────────
+async function loadDataTable() {
+  const res = await fetch('/api/sessions');
+  const sessions = await res.json();
+  const tbody = document.getElementById('data-tbody');
+  tbody.innerHTML = '';
+  sessions.forEach(s => {
+    const jst = stemToJST(s.stem);
+    const hrSizeKb = s.hr_size_kb ?? '--';
+    const totalKb = s.hr_size_kb ? (s.size_kb + s.hr_size_kb).toFixed(1) : s.size_kb;
+    const tr = document.createElement('tr');
+    tr.id = `row-${s.stem}`;
+    tr.innerHTML = `
+      <td>${jst}</td>
+      <td class="kind-ecg">${s.size_kb} KB</td>
+      <td class="kind-hr">${hrSizeKb} KB</td>
+      <td style="color:var(--muted)">${totalKb} KB</td>
+      <td style="color:var(--muted)">${s.mtime}</td>
+      <td>
+        <button onclick="deleteSession('${s.stem}')"
+          style="background:#7f1d1d;color:#fef2f2;border:none;border-radius:4px;
+                 padding:4px 12px;cursor:pointer;font-size:12px;">
+          削除
+        </button>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+  if (!sessions.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center">データなし</td></tr>';
+  }
+}
+
+async function deleteSession(stem) {
+  const jst = stemToJST(stem);
+  if (!confirm(`削除しますか？\n${jst}\n（ECG + HR の2ファイル）`)) return;
+  const res = await fetch(`/api/session/${stem}`, { method: 'DELETE' });
+  const data = await res.json();
+  if (data.ok) {
+    document.getElementById(`row-${stem}`)?.remove();
+    // 解析タブのリストも更新
+    loadSessions();
+  } else {
+    alert('削除失敗: ' + (data.errors || []).join('\n'));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 起動
+// ─────────────────────────────────────────────────────────────
+connectWS();
+
+// ページ表示後に状態同期
+window.addEventListener('load', async () => {
+  const res = await fetch('/api/status');
+  const s = await res.json();
+  if (s.running) {
+    document.getElementById('btn-start').disabled = true;
+    document.getElementById('btn-stop').disabled = false;
+    if (s.elapsed) document.getElementById('session-lbl').textContent = s.elapsed;
+  }
+  document.getElementById('gap-count').textContent = `欠落 ${s.gap_count}件`;
+  if (s.last_bpm) updateBPM(s.last_bpm);
+  if (s.battery !== null) updateBattery(s.battery);
+});
+</script>
+</body>
+</html>

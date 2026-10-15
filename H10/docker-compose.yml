@@ -1,0 +1,12 @@
+services:
+  h10:
+    build: ./web
+    ports:
+      - "8887:8080"
+    volumes:
+      - /data/H10:/app/data
+      - /var/run/dbus:/var/run/dbus
+    privileged: true
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
