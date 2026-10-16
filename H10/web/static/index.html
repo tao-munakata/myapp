@@ -157,7 +157,13 @@
   #analysis-filters { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; }
   #analysis-filters label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   #analysis-filters input { width: 140px; max-width: 100%; accent-color: var(--cyan); }
+  #analysis-filters input:disabled { opacity: .45; }
   #analysis-filter-note { flex-basis: 100%; color: var(--muted); font-size: 12px; }
+  #analysis-ecg-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  #analysis-ecg-reset { border: 1px solid var(--border); border-radius: 5px; padding: 4px 9px;
+    color: var(--text); background: var(--bg3); cursor: pointer; font-size: 11px; }
+  #analysis-ecg-reset:disabled { opacity: .45; cursor: default; }
+  #an-ecg-canvas { cursor: crosshair; touch-action: none; }
   @media (max-width: 700px) {
     #analysis-layout { height: auto; grid-template-columns: minmax(0, 1fr); }
     #session-list-panel { max-height: 160px; }
@@ -262,19 +268,21 @@
     </div>
     <div id="analysis-right">
       <div class="card" id="analysis-filters" role="group" aria-label="解析 ECG フィルター">
+        <button class="btn" id="analysis-raw" type="button">生データ表示</button>
+        <button class="btn" id="analysis-filtered" type="button" disabled>フィルターに戻す</button>
         <label for="analysis-low">低域カット <input id="analysis-low" type="range" min="0.1" max="10" step="0.1" value="0.5"><output id="analysis-low-value" for="analysis-low">0.5 Hz</output></label>
         <label for="analysis-high">高域カット <input id="analysis-high" type="range" min="15" max="60" step="1" value="40"><output id="analysis-high-value" for="analysis-high">40 Hz</output></label>
         <button class="btn" id="analysis-original" type="button">保存波形に戻す</button>
         <span id="analysis-filter-state" role="status" aria-live="polite">保存波形を表示</span>
-        <div id="analysis-filter-note">保存時に 0.5–40 Hz 処理済み。スライダーは追加フィルターです。除去済みの成分は復元できません。</div>
+        <div id="analysis-filter-note">生データは受信値そのまま。フィルター表示は保存時に 0.5–40 Hz 処理済みです。生データ保存は Ver 1.3.0 以降の収録分が対象です。</div>
       </div>
       <div id="analysis-info">セッションをクリックして解析</div>
       <div class="card">
-        <div class="card-title">ECG（解析）</div>
+        <div class="card-title" id="analysis-ecg-title"><span>ECG（解析）— クリックで拡大・ドラッグで移動</span><button id="analysis-ecg-reset" type="button" disabled>全体表示</button></div>
         <div class="chart-wrap" style="height:200px"><canvas id="an-ecg-canvas"></canvas></div>
       </div>
       <div class="card">
-        <div class="card-title">心拍数 / RR 間隔（解析）</div>
+        <div class="card-title">心拍数 / RR 間隔（解析）— 赤点をクリックすると ECG を拡大</div>
         <div class="chart-wrap" style="height:160px"><canvas id="an-hr-canvas"></canvas></div>
       </div>
     </div>
@@ -666,9 +674,21 @@ async function stopCollection() {
 let anEcgChart = null, anHrChart = null;
 let selectedStem = null;
 let analysisRequest = 0, analysisFilterEnabled = false, analysisFilterTimer = null;
+let analysisEcgFullRange = [0, 0], analysisEcgRange = [0, 0];
+let analysisEcgPointer = null, analysisEcgSuppressClick = false;
+let analysisEcgInteractive = false;
+let analysisRawMode = false, analysisRawUnavailable = false;
 const analysisLow = document.getElementById('analysis-low');
 const analysisHigh = document.getElementById('analysis-high');
 const analysisFilterState = document.getElementById('analysis-filter-state');
+const analysisRawButton = document.getElementById('analysis-raw');
+const analysisFilteredButton = document.getElementById('analysis-filtered');
+function updateAnalysisSourceControls() {
+  analysisRawButton.disabled = analysisRawMode || analysisRawUnavailable;
+  analysisFilteredButton.disabled = !analysisRawMode;
+  analysisLow.disabled = analysisHigh.disabled = analysisRawMode;
+  document.getElementById('analysis-original').disabled = analysisRawMode;
+}
 [analysisLow, analysisHigh].forEach(input => input.addEventListener('input', () => {
   analysisFilterEnabled = true; ++analysisRequest;
   document.getElementById('analysis-low-value').textContent = Number(analysisLow.value).toFixed(1) + ' Hz';
@@ -682,6 +702,19 @@ document.getElementById('analysis-original').addEventListener('click', () => {
   analysisFilterState.textContent = '保存波形を表示';
   if (selectedStem) analyzeSession(selectedStem);
 });
+analysisRawButton.addEventListener('click', () => {
+  if (!selectedStem || analysisRawUnavailable) return;
+  analysisRawMode = true;
+  updateAnalysisSourceControls();
+  analyzeSession(selectedStem);
+});
+analysisFilteredButton.addEventListener('click', () => {
+  if (!selectedStem || !analysisRawMode) return;
+  analysisRawMode = false;
+  updateAnalysisSourceControls();
+  analyzeSession(selectedStem);
+});
+updateAnalysisSourceControls();
 function dataExtent(values, fallbackMin, fallbackMax) {
   let min = Infinity, max = -Infinity;
   for (const value of values) {
@@ -689,6 +722,77 @@ function dataExtent(values, fallbackMin, fallbackMax) {
   }
   return min === Infinity ? [fallbackMin, fallbackMax] : [min, max];
 }
+
+function setAnalysisEcgRange(min, max) {
+  if (!anEcgChart) return;
+  const [fullMin, fullMax] = analysisEcgFullRange;
+  const width = Math.min(fullMax - fullMin, Math.max(0, max - min));
+  if (!(width > 0)) return;
+  min = Math.max(fullMin, Math.min(min, fullMax - width));
+  max = min + width;
+  analysisEcgRange = [min, max];
+  anEcgChart.options.scales.x.min = min;
+  anEcgChart.options.scales.x.max = max;
+  const visibleValues = anEcgChart.data.datasets[0].data
+    .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y) && point.x >= min && point.x <= max)
+    .map(point => point.y);
+  if (visibleValues.length) {
+    const [yMin, yMax] = dataExtent(visibleValues, -100, 100);
+    const yPad = (yMax - yMin) * 0.1 || 100;
+    anEcgChart.options.scales.y.min = yMin - yPad;
+    anEcgChart.options.scales.y.max = yMax + yPad;
+  }
+  anEcgChart.update('none');
+  document.getElementById('analysis-ecg-reset').disabled =
+    width >= fullMax - fullMin - Math.max(1e-9, (fullMax - fullMin) * 1e-9);
+}
+
+const analysisEcgCanvas = document.getElementById('an-ecg-canvas');
+document.getElementById('analysis-ecg-reset').addEventListener('click', () => {
+  if (anEcgChart) setAnalysisEcgRange(...analysisEcgFullRange);
+});
+analysisEcgCanvas.addEventListener('pointerdown', event => {
+  if (!anEcgChart || !analysisEcgInteractive) return;
+  const {x: px} = Chart.helpers.getRelativePosition(event, anEcgChart);
+  const area = anEcgChart.chartArea;
+  if (px < area.left || px > area.right) return;
+  analysisEcgPointer = {id: event.pointerId, x: event.clientX,
+    min: analysisEcgRange[0], max: analysisEcgRange[1], moved: false,
+    plotWidth: area.right - area.left};
+  analysisEcgCanvas.setPointerCapture(event.pointerId);
+});
+analysisEcgCanvas.addEventListener('pointermove', event => {
+  const drag = analysisEcgPointer;
+  if (!drag || drag.id !== event.pointerId || !anEcgChart) return;
+  const dx = event.clientX - drag.x;
+  if (Math.abs(dx) > 3) drag.moved = true;
+  if (!drag.moved) return;
+  analysisEcgCanvas.style.cursor = 'grabbing';
+  const secondsPerPixel = (drag.max - drag.min) / drag.plotWidth;
+  setAnalysisEcgRange(drag.min - dx * secondsPerPixel, drag.max - dx * secondsPerPixel);
+});
+function finishAnalysisEcgDrag(event) {
+  if (!analysisEcgPointer || analysisEcgPointer.id !== event.pointerId) return;
+  analysisEcgSuppressClick = analysisEcgPointer.moved;
+  analysisEcgPointer = null;
+  analysisEcgCanvas.style.cursor = 'crosshair';
+}
+analysisEcgCanvas.addEventListener('pointerup', finishAnalysisEcgDrag);
+analysisEcgCanvas.addEventListener('pointercancel', finishAnalysisEcgDrag);
+analysisEcgCanvas.addEventListener('click', event => {
+  if (analysisEcgSuppressClick) { analysisEcgSuppressClick = false; return; }
+  if (!anEcgChart || !analysisEcgInteractive) return;
+  const {x: px} = Chart.helpers.getRelativePosition(event, anEcgChart);
+  const area = anEcgChart.chartArea;
+  if (px < area.left || px > area.right) return;
+  const [min, max] = analysisEcgRange;
+  const currentWidth = max - min;
+  const fullWidth = analysisEcgFullRange[1] - analysisEcgFullRange[0];
+  const nextWidth = Math.max(fullWidth / Math.max(2, anEcgChart.data.datasets[0].data.length), currentWidth / 2);
+  if (nextWidth >= currentWidth) return;
+  const center = anEcgChart.scales.x.getValueForPixel(px);
+  setAnalysisEcgRange(center - nextWidth / 2, center + nextWidth / 2);
+});
 
 
 function stemToJST(stem) {
@@ -724,10 +828,16 @@ async function loadSessions() {
 }
 
 async function analyzeSession(stem) {
+  if (selectedStem !== stem) {
+    analysisRawMode = false;
+    analysisRawUnavailable = false;
+    updateAnalysisSourceControls();
+  }
   selectedStem = stem;
   const requestId = ++analysisRequest;
-  const filterLabel = analysisFilterEnabled ? '追加フィルター ' + analysisLow.value + '–' + analysisHigh.value + ' Hz' : '保存波形を表示';
-  const query = analysisFilterEnabled ? '?low_hz=' + analysisLow.value + '&high_hz=' + analysisHigh.value : '';
+  const requestedRaw = analysisRawMode;
+  const filterLabel = requestedRaw ? '受信した生データを表示' : analysisFilterEnabled ? '追加フィルター ' + analysisLow.value + '–' + analysisHigh.value + ' Hz' : 'フィルター済み保存波形を表示';
+  const query = requestedRaw ? '?raw=1' : analysisFilterEnabled ? '?low_hz=' + analysisLow.value + '&high_hz=' + analysisHigh.value : '';
   try {
   document.getElementById('analysis-info').textContent = '読み込み中...';
 
@@ -739,19 +849,34 @@ async function analyzeSession(stem) {
   const ecgData = await ecgRes.json();
   const hrData2 = await hrRes.json();
   if (requestId !== analysisRequest) return;
-  analysisFilterState.textContent = filterLabel;
+  if (requestedRaw && !ecgData.raw_displayed) {
+    analysisRawMode = false;
+    analysisRawUnavailable = true;
+    updateAnalysisSourceControls();
+    analysisFilterState.textContent = 'この保存データに未処理の生データはありません';
+  } else {
+    analysisRawUnavailable = !ecgData.raw_available;
+    updateAnalysisSourceControls();
+    analysisFilterState.textContent = filterLabel;
+  }
 
   // ECG グラフ — Y軸を実データに合わせて自動調整
   const ecgCtx = document.getElementById('an-ecg-canvas');
   if (anEcgChart) { anEcgChart.destroy(); }
   const [ecgMin, ecgMax] = dataExtent(ecgData.ecg, -100, 100);
   const ecgPad = (ecgMax - ecgMin) * 0.1 || 100;
+  const ecgPoints = ecgData.ecg.map((value, i) => ({x: ecgData.t[i], y: value}));
+  analysisEcgInteractive = ecgData.t.length > 1 && ecgData.t[ecgData.t.length - 1] > ecgData.t[0];
+  analysisEcgFullRange = analysisEcgInteractive
+    ? [ecgData.t[0], ecgData.t[ecgData.t.length - 1]] : [0, 1];
+  analysisEcgRange = [...analysisEcgFullRange];
+  document.getElementById('analysis-ecg-reset').disabled = true;
   anEcgChart = new Chart(ecgCtx, {
     type: 'line',
     data: {
       labels: ecgData.t,
       datasets: [{
-        data: ecgData.ecg,
+        data: ecgPoints,
         borderColor: '#06b6d4',
         borderWidth: 1,
         pointRadius: 0,
@@ -760,10 +885,12 @@ async function analyzeSession(stem) {
     },
     options: {
       animation: false, responsive: true, maintainAspectRatio: false,
+      parsing: false,
       plugins: { legend: { display: false } },
       scales: {
-        x: { ticks: { color: '#94a3b8', maxTicksLimit: 10,
-                       callback: v => ecgData.t[v] !== undefined ? ecgData.t[v].toFixed(0)+'s' : '' },
+        x: { type: 'linear', min: analysisEcgFullRange[0], max: analysisEcgFullRange[1],
+             ticks: { color: '#94a3b8', maxTicksLimit: 10,
+                       callback: v => Number(v).toFixed(0)+'s' },
              grid: { color: '#1e293b' } },
         y: { min: ecgMin - ecgPad, max: ecgMax + ecgPad,
              ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } }
@@ -775,6 +902,9 @@ async function analyzeSession(stem) {
   const hrCtx = document.getElementById('an-hr-canvas');
   if (anHrChart) { anHrChart.destroy(); }
   const rr = hrData2.rr || [];
+  const rrTimes = hrData2.rr_t || [];
+  const [rrTimeMin, rrTimeMax] = dataExtent(rrTimes, 0, 1);
+  const rrTimePad = rrTimeMax > rrTimeMin ? 0 : 0.5;
   const meanRR2 = rr.length ? rr.reduce((a, b) => a + b, 0) / rr.length : 850;
   const rrColors2 = rr.map(v => v > meanRR2 * 1.5 ? '#ef4444' : '#3b82f6');
 
@@ -801,11 +931,12 @@ async function analyzeSession(stem) {
         },
         {
           label: 'RR (ms)',
-          data: rrColors2.map((c, i) => ({ x: i, y: rr[i] })),
+          data: rrColors2.map((c, i) => ({ x: rrTimes[i] ?? i, y: rr[i] })),
           borderColor: '#3b82f6',
           borderWidth: 1.5,
           pointBackgroundColor: rrColors2,
           pointRadius: 4,
+          pointHitRadius: 9,
           showLine: true,
           tension: 0,
           yAxisID: 'yRR',
@@ -816,10 +947,18 @@ async function analyzeSession(stem) {
     },
     options: {
       animation: false, responsive: true, maintainAspectRatio: false,
+      onClick: (event, elements) => {
+        const candidate = elements.find(element => element.datasetIndex === 1);
+        if (!candidate || rrColors2[candidate.index] !== '#ef4444') return;
+        const absoluteTime = rrTimes[candidate.index];
+        if (!Number.isFinite(absoluteTime) || !Number.isFinite(ecgData.start_epoch) || !analysisEcgInteractive) return;
+        const center = absoluteTime - ecgData.start_epoch;
+        setAnalysisEcgRange(center - 2.5, center + 2.5);
+      },
       plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12 } } },
       scales: {
         x:   { ticks: { color: '#94a3b8', maxTicksLimit: 8 }, grid: { color: '#1e293b' } },
-        xRR: { display: false, type: 'linear', min: 0, max: rr.length },
+        xRR: { display: false, type: 'linear', min: rrTimeMin - rrTimePad, max: rrTimeMax + rrTimePad },
         yHR: { position: 'left',  min: hrMin, max: hrMax,
                 ticks: { color: '#ef4444' }, grid: { color: '#1e293b' },
                 title: { display: true, text: 'bpm', color: '#ef4444' } },
@@ -832,16 +971,17 @@ async function analyzeSession(stem) {
 
   // 統計
   const n = rr.length;
+  const gaps = rr.filter(v => v > meanRR2 * 1.5).length;
   let info = `ECG: ${ecgData.ecg.length} samples (${ecgData.t[ecgData.t.length-1]?.toFixed(1)}s)`;
   if (n >= 2) {
     const diffs = rr.slice(1).map((v, i) => v - rr[i]);
     const rmssd = Math.sqrt(diffs.reduce((s, d) => s + d*d, 0) / diffs.length);
     const sdnn = Math.sqrt(rr.reduce((s, v) => s + (v - meanRR2)**2, 0) / (n - 1));
-    const gaps = rr.filter(v => v > meanRR2 * 1.5).length;
     info += `\nHR: ${hrData2.hr.length ? Math.round(hrData2.hr.reduce((a,b)=>a+b,0)/hrData2.hr.length) : '--'} bpm (mean)`;
     info += `\nRR: ${meanRR2.toFixed(1)} ms (mean)   SDNN: ${sdnn.toFixed(1)} ms   RMSSD: ${rmssd.toFixed(1)} ms`;
-    info += `\n欠落候補 (RR > ${(meanRR2*1.5).toFixed(0)}ms): ${gaps} 件`;
   }
+  const gapRate = n ? (gaps * 100 / n).toFixed(1) : '0.0';
+  info += `\n欠落候補 (RR > ${(meanRR2*1.5).toFixed(0)}ms): ${gaps} / ${n} 件 (${gapRate}%)`;
   document.getElementById('analysis-info').textContent = info;
   } catch (error) {
     if (requestId !== analysisRequest) return;

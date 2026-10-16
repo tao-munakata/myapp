@@ -92,15 +92,15 @@ class DataRecorder:
         hp = DATA_DIR / f"hr_{ts}.csv"
         self._ef = open(ep, "w", newline=""); self._ew = csv.writer(self._ef)
         self._hf = open(hp, "w", newline=""); self._hw = csv.writer(self._hf)
-        self._ew.writerow(["sample_index", "timestamp_sec", "ecg_uv"])
-        self._hw.writerow(["elapsed_sec", "hr_bpm", "rr_ms"])
+        self._ew.writerow(["sample_index", "timestamp_sec", "ecg_uv", "ecg_raw"])
+        self._hw.writerow(["elapsed_sec", "hr_bpm", "rr_ms", "timestamp_epoch_sec"])
         self._rotate_at = time.time() + FILE_ROTATE_SEC
 
-    def record_ecg(self, t, samples):
+    def record_ecg(self, t, raw_samples, filtered_samples):
         if self._ecg_t0 is None:
             self._ecg_t0 = t
-        for s in samples:
-            self._ew.writerow([self._ecg_idx, round(self._ecg_t0 + self._ecg_idx / FS, 6), s])
+        for raw, filtered in zip(raw_samples, filtered_samples):
+            self._ew.writerow([self._ecg_idx, round(self._ecg_t0 + self._ecg_idx / FS, 6), filtered, raw])
             self._ecg_idx += 1
         self._ef.flush()
         if time.time() >= self._rotate_at:
@@ -108,8 +108,11 @@ class DataRecorder:
 
     def record_hr(self, t, bpm, rr_list):
         elapsed = t - self._start
-        for rr in (rr_list or [None]):
-            self._hw.writerow([round(elapsed, 3), bpm, rr])
+        rows = rr_list or [None]
+        for i, rr in enumerate(rows):
+            beat_time = t - sum(rows[i + 1:]) / 1000 if rr is not None else None
+            self._hw.writerow([round(elapsed, 3), bpm, rr,
+                               round(beat_time, 6) if beat_time is not None else None])
         self._hf.flush()
 
     def _close(self):
@@ -300,13 +303,14 @@ async def _broadcast_worker():
                 _recorder.record_hr(time.time(), msg["bpm"], msg.get("rr", []))
         elif kind == "ecg":
             # サーバーサイドバンドパスフィルタ
-            arr = np.array(msg["samples"], dtype=float)
+            raw_samples = msg["samples"]
+            arr = np.array(raw_samples, dtype=float)
             filt, _zi = scipy_signal.sosfilt(_sos, arr, zi=_zi)
             display, _display_zi = scipy_signal.sosfilt(
                 _display_sos, arr, zi=_display_zi)
             msg["samples"] = [round(float(v), 1) for v in display]
             if _recorder:
-                _recorder.record_ecg(time.time(), [round(float(v), 1) for v in filt])
+                _recorder.record_ecg(time.time(), raw_samples, [round(float(v), 1) for v in filt])
         elif kind == "gap":
             app_state["gap_count"] += 1
             msg["ts"] = datetime.now().strftime("%H:%M:%S")
@@ -429,20 +433,32 @@ async def api_session_hr(stem: str):
     path = DATA_DIR / f"hr_{stem}.csv"
     if not path.exists():
         return JSONResponse({"error": "not found"}, status_code=404)
-    t_list, hr_list, rr_list = [], [], []
+    t_list, hr_list, rr_list, rr_t = [], [], [], []
+    rows = []
     with path.open() as f:
-        for row in csv.DictReader(f):
-            t_list.append(float(row["elapsed_sec"]))
-            hr_list.append(int(row["hr_bpm"]))
-            if row["rr_ms"] and row["rr_ms"] != "None":
-                rr_list.append(float(row["rr_ms"]))
-    return {"t": t_list, "hr": hr_list, "rr": rr_list}
+        rows = list(csv.DictReader(f))
+    first_elapsed = next((float(row["elapsed_sec"]) for row in rows if row.get("elapsed_sec")), 0.0)
+    try:
+        stem_epoch = datetime.strptime(stem, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        stem_epoch = 0.0
+    estimated_start_epoch = stem_epoch - first_elapsed
+    for row in rows:
+        t_list.append(float(row["elapsed_sec"]))
+        hr_list.append(int(row["hr_bpm"]))
+        if row["rr_ms"] and row["rr_ms"] != "None":
+            rr_list.append(float(row["rr_ms"]))
+            timestamp = row.get("timestamp_epoch_sec")
+            rr_t.append(float(timestamp) if timestamp not in (None, "", "None")
+                        else estimated_start_epoch + float(row["elapsed_sec"]))
+    return {"t": t_list, "hr": hr_list, "rr": rr_list, "rr_t": rr_t}
 
 
 @app.get("/api/session/{stem}/ecg")
 async def api_session_ecg(stem: str,
     low_hz: float = Query(default=None, ge=0.1, le=10.0),
-    high_hz: float = Query(default=None, ge=15.0, le=60.0)):
+    high_hz: float = Query(default=None, ge=15.0, le=60.0),
+    raw: bool = Query(default=False)):
     path = DATA_DIR / f"ecg_{stem}.csv"
     if not path.exists():
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -450,16 +466,20 @@ async def api_session_ecg(stem: str,
         return JSONResponse({"error": "Specify both cutoff frequencies"}, status_code=422)
     t_list, v_list = [], []
     with path.open() as f:
-        for row in csv.DictReader(f):
+        reader = csv.DictReader(f)
+        raw_available = "ecg_raw" in (reader.fieldnames or [])
+        for row in reader:
             t_list.append(float(row["timestamp_sec"]))
-            v_list.append(float(row["ecg_uv"]))
+            use_raw = raw and raw_available and row.get("ecg_raw") not in (None, "", "None")
+            v_list.append(float(row["ecg_raw"] if use_raw else row["ecg_uv"]))
     if low_hz is not None and v_list:
         sos = scipy_signal.butter(4, [low_hz, high_hz], btype="bandpass", fs=FS, output="sos")
         zi = scipy_signal.sosfilt_zi(sos) * v_list[0]
         filtered, _ = scipy_signal.sosfilt(sos, np.asarray(v_list), zi=zi)
         v_list = filtered.tolist()
     t0 = t_list[0] if t_list else 0
-    return {"t": [round(t - t0, 3) for t in t_list[::5]], "ecg": v_list[::5]}
+    return {"t": [round(t - t0, 3) for t in t_list[::5]], "ecg": v_list[::5],
+            "start_epoch": t0, "raw_available": raw_available, "raw_displayed": raw and raw_available}
 
 
 # ── WebSocket ─────────────────────────────────────────────────
