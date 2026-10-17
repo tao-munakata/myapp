@@ -304,6 +304,7 @@ async def _broadcast_worker():
         elif kind == "ecg":
             # サーバーサイドバンドパスフィルタ
             raw_samples = msg["samples"]
+            msg["raw_samples"] = raw_samples.copy()
             arr = np.array(raw_samples, dtype=float)
             filt, _zi = scipy_signal.sosfilt(_sos, arr, zi=_zi)
             display, _display_zi = scipy_signal.sosfilt(

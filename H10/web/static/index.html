@@ -164,6 +164,17 @@
     color: var(--text); background: var(--bg3); cursor: pointer; font-size: 11px; }
   #analysis-ecg-reset:disabled { opacity: .45; cursor: default; }
   #an-ecg-canvas { cursor: crosshair; touch-action: none; }
+  #tab-ecg-only { min-width: 0; min-height: 0; padding: 14px; background: #050b14; }
+  #ecg-only-frame { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+  #ecg-only-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--muted); font-size: 13px; }
+  #ecg-only-ranges { display: flex; gap: 4px; margin-left: auto; }
+  #ecg-only-modes { display: flex; gap: 4px; }
+  .ecg-range-btn { border: 1px solid var(--border); border-radius: 5px; padding: 5px 9px; color: var(--muted); background: var(--bg2); cursor: pointer; }
+  .ecg-range-btn.active { color: var(--cyan); border-color: var(--cyan); }
+  #ecg-only-status { width: 9px; height: 9px; border-radius: 50%; background: var(--red); }
+  #ecg-only-chart { position: relative; flex: 1; min-height: 180px; }
+  #ecg-only-chart canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
+  #ecg-only-note { color: #64748b; font-size: 11px; }
   @media (max-width: 700px) {
     #analysis-layout { height: auto; grid-template-columns: minmax(0, 1fr); }
     #session-list-panel { max-height: 160px; }
@@ -205,8 +216,19 @@
 <!-- タブ -->
 <div id="tabs">
   <button class="tab-btn active" onclick="showTab('live', this)">ライブ</button>
+  <button class="tab-btn" onclick="showTab('ecg-only', this)">ECGのみ</button>
   <button class="tab-btn" onclick="showTab('analysis', this)">解析</button>
   <button class="tab-btn" onclick="showTab('data', this)">データ管理</button>
+</div>
+
+<div id="tab-ecg-only" class="tab-panel">
+  <div id="ecg-only-frame">
+    <div id="ecg-only-heading"><span id="ecg-only-status"></span><span>ECG — リアルタイム</span><span id="ecg-only-filter">0.5–40 Hz</span><div id="ecg-only-modes" role="group" aria-label="表示する波形"><button class="ecg-range-btn active" id="ecg-only-filtered" type="button">フィルター</button><button class="ecg-range-btn" id="ecg-only-raw" type="button">受信データ（生）</button></div><div id="ecg-only-ranges" role="group" aria-label="横軸の表示時間">
+      <button class="ecg-range-btn" data-seconds="5" type="button">5秒</button><button class="ecg-range-btn active" data-seconds="10" type="button">10秒</button><button class="ecg-range-btn" data-seconds="20" type="button">20秒</button><button class="ecg-range-btn" data-seconds="30" type="button">30秒</button>
+    </div></div>
+    <div id="ecg-only-chart"><canvas id="ecg-only-canvas"></canvas></div>
+    <div id="ecg-only-note">首の脈を指で感じながら波形を観察できます。表示は診断用ではありません。</div>
+  </div>
 </div>
 
 <!-- ライブタブ -->
@@ -310,7 +332,11 @@ function showTab(name, button) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
   button.classList.add('active');
-  document.getElementById('filter-controls').style.display = name === 'live' ? 'flex' : 'none';
+  document.getElementById('filter-controls').style.display = ['live', 'ecg-only'].includes(name) ? 'flex' : 'none';
+  filterLow.disabled = filterHigh.disabled = name === 'ecg-only' && ecgOnlyRawMode;
+  if (name === 'ecg-only') updateEcgOnlyMode();
+  else filterStatus.textContent = 'ライブ表示に適用・保存は 0.5–40 Hz';
+  if (name === 'ecg-only') requestAnimationFrame(() => ecgOnlyChart.resize());
   if (name === 'analysis') loadSessions();
   if (name === 'data') loadDataTable();
 }
@@ -319,16 +345,22 @@ function showTab(name, button) {
 // ─────────────────────────────────────────────────────────────
 // Chart.js — ECG リアルタイム (ローリングバッファ)
 // ─────────────────────────────────────────────────────────────
-const ECG_BUF = 260;   // 10秒 × 26Hz 表示
+const ECG_DISPLAY_RATE = 26;
+const ECG_BUF = 30 * ECG_DISPLAY_RATE; // 最大30秒のスクロール履歴
+const LIVE_ECG_BUF = 10 * ECG_DISPLAY_RATE;
 const ecgBuf = new Array(ECG_BUF).fill(null);
+const ecgRawBuf = new Array(ECG_BUF).fill(null);
 let ecgPending = [];   // WebSocket から積まれたサンプル
+let ecgRawPending = [];
+let ecgOnlyWindowSec = 10;
+let ecgOnlyRawMode = false;
 
 const ecgChart = new Chart(document.getElementById('ecg-canvas'), {
   type: 'line',
   data: {
-    labels: ecgBuf.map((_, i) => i),
+    labels: ecgBuf.slice(-LIVE_ECG_BUF).map((_, i) => i),
     datasets: [{
-      data: [...ecgBuf],
+      data: ecgBuf.slice(-LIVE_ECG_BUF),
       borderColor: '#06b6d4',
       borderWidth: 1.5,
       pointRadius: 0,
@@ -348,6 +380,52 @@ const ecgChart = new Chart(document.getElementById('ecg-canvas'), {
     }
   }
 });
+const ecgOnlyChart = new Chart(document.getElementById('ecg-only-canvas'), {
+  type: 'line',
+  data: { datasets: [{
+    data: ecgBuf.map((value, i) => ({x: (i - (ECG_BUF - 1)) / ECG_DISPLAY_RATE, y: value})), borderColor: '#22d3ee', borderWidth: 2.5,
+    pointRadius: 0, tension: 0, spanGaps: false,
+  }] },
+  options: {
+    animation: false, responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { type: 'linear', min: -ecgOnlyWindowSec, max: 0,
+        title: { display: true, text: '時間（秒）', color: '#94a3b8' },
+        ticks: { color: '#94a3b8', stepSize: 1, callback: value => `${value}s` },
+        grid: { color: '#1e293b' } },
+      y: { ticks: { color: '#94a3b8', maxTicksLimit: 6 }, grid: { color: '#1e293b' } }
+    }
+  }
+});
+document.querySelectorAll('.ecg-range-btn').forEach(button => button.addEventListener('click', () => {
+  if (!button.dataset.seconds) return;
+  ecgOnlyWindowSec = Number(button.dataset.seconds);
+  document.querySelectorAll('.ecg-range-btn').forEach(item => item.classList.toggle('active', item === button));
+  ecgOnlyChart.options.scales.x.min = -ecgOnlyWindowSec;
+  ecgOnlyChart.options.scales.x.max = 0;
+  ecgOnlyChart.update('none');
+}));
+function updateEcgOnlyMode() {
+  document.getElementById('ecg-only-filtered').classList.toggle('active', !ecgOnlyRawMode);
+  document.getElementById('ecg-only-raw').classList.toggle('active', ecgOnlyRawMode);
+  filterLow.disabled = filterHigh.disabled = ecgOnlyRawMode;
+  document.getElementById('ecg-only-filter').textContent = ecgOnlyRawMode
+    ? '受信値そのまま（フィルターなし）' : document.getElementById('filter-band').textContent;
+  filterStatus.textContent = ecgOnlyRawMode ? '受信データを無処理で表示中（フィルター設定は保持）' : 'ライブ表示に適用・保存は 0.5–40 Hz';
+}
+document.getElementById('ecg-only-filtered').addEventListener('click', () => {
+  ecgOnlyRawMode = false;
+  updateEcgOnlyMode();
+  ecgOnlyChart.data.datasets[0].data = ecgBuf.map((value, i) => ({x: (i - (ECG_BUF - 1)) / ECG_DISPLAY_RATE, y: value}));
+  ecgOnlyChart.update('none');
+});
+document.getElementById('ecg-only-raw').addEventListener('click', () => {
+  ecgOnlyRawMode = true;
+  updateEcgOnlyMode();
+  ecgOnlyChart.data.datasets[0].data = ecgRawBuf.map((value, i) => ({x: (i - (ECG_BUF - 1)) / ECG_DISPLAY_RATE, y: value}));
+  ecgOnlyChart.update('none');
+});
 
 // 100ms ごとに pending サンプルをバッファに反映して描画
 setInterval(() => {
@@ -357,15 +435,30 @@ setInterval(() => {
   ecgPending = [];
   ecgBuf.splice(0, ds.length);
   ecgBuf.push(...ds);
-  ecgChart.data.datasets[0].data = [...ecgBuf];
+  const rawDs = ecgRawPending.filter((_, i) => i % 5 === 0);
+  ecgRawPending = [];
+  ecgRawBuf.splice(0, rawDs.length);
+  ecgRawBuf.push(...rawDs);
+  const liveValues = ecgBuf.slice(-LIVE_ECG_BUF);
+  ecgChart.data.datasets[0].data = liveValues;
   // Y軸を実データに自動フィット
-  const vals = ecgBuf.filter(v => v !== null);
+  const vals = liveValues.filter(v => v !== null);
   if (vals.length) {
     const mn = Math.min(...vals), mx = Math.max(...vals), pad = (mx - mn) * 0.1 || 50;
     ecgChart.options.scales.y.min = mn - pad;
     ecgChart.options.scales.y.max = mx + pad;
   }
   ecgChart.update('none');
+  const soloBuffer = ecgOnlyRawMode ? ecgRawBuf : ecgBuf;
+  ecgOnlyChart.data.datasets[0].data = soloBuffer.map((value, i) => ({x: (i - (ECG_BUF - 1)) / ECG_DISPLAY_RATE, y: value}));
+  const soloValues = soloBuffer.slice(-ecgOnlyWindowSec * ECG_DISPLAY_RATE).filter(v => v !== null);
+  if (soloValues.length) {
+    const soloMin = Math.min(...soloValues), soloMax = Math.max(...soloValues);
+    const soloPad = (soloMax - soloMin) * 0.1 || 50;
+    ecgOnlyChart.options.scales.y.min = soloMin - soloPad;
+    ecgOnlyChart.options.scales.y.max = soloMax + soloPad;
+  }
+  ecgOnlyChart.update('none');
 }, 100);
 
 
@@ -388,10 +481,14 @@ function applyFilterSettings(settings, clear = false) {
     showFilterValues();
   }
   document.getElementById('filter-band').textContent = settings.low_hz + '–' + settings.high_hz + ' Hz';
+  document.getElementById('ecg-only-filter').textContent = settings.low_hz + '–' + settings.high_hz + ' Hz';
   if (clear) {
-    ecgBuf.fill(null); ecgPending = [];
-    ecgChart.data.datasets[0].data = [...ecgBuf];
+    ecgBuf.fill(null); ecgPending = []; ecgRawPending = [];
+    ecgChart.data.datasets[0].data = ecgBuf.slice(-LIVE_ECG_BUF);
     ecgChart.update('none');
+    const soloBuffer = ecgOnlyRawMode ? ecgRawBuf : ecgBuf;
+    ecgOnlyChart.data.datasets[0].data = soloBuffer.map((value, i) => ({x: (i - (ECG_BUF - 1)) / ECG_DISPLAY_RATE, y: value}));
+    ecgOnlyChart.update('none');
   }
 }
 async function sendFilterSettings() {
@@ -573,6 +670,7 @@ function handleMessage(msg) {
 
     case 'ecg':
       ecgPending.push(...msg.samples);
+      if (msg.raw_samples) ecgRawPending.push(...msg.raw_samples);
       break;
 
     case 'gap': {
@@ -609,10 +707,12 @@ function setConnected(val) {
   const lbl = document.getElementById('conn-status');
   if (val) {
     dot.style.color = '#22c55e';
+    document.getElementById('ecg-only-status').style.background = '#22c55e';
     lbl.textContent = '◉ 接続済み';
     lbl.style.color = '#22c55e';
   } else {
     dot.style.color = '#ef4444';
+    document.getElementById('ecg-only-status').style.background = '#ef4444';
     lbl.textContent = '◉ 切断';
     lbl.style.color = '#ef4444';
   }
@@ -641,7 +741,7 @@ async function startCollection() {
     document.getElementById('gap-count').textContent = '欠落 0件';
     hrData = []; hrLabels = [];
     rrData = []; rrColors = [];
-    ecgBuf.fill(null); ecgPending = [];
+    ecgBuf.fill(null); ecgRawBuf.fill(null); ecgPending = []; ecgRawPending = [];
     meanRR = 850;
     // セッションタイマー
     sessionStart = Date.now();

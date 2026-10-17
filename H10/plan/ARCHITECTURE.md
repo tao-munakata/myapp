@@ -1,5 +1,13 @@
 # Architecture
 
+## ECG-only live view
+- Add a dedicated tab that displays only the live ECG waveform at a large size for simultaneous visual observation and manual pulse checking.
+- Reuse the existing WebSocket samples and display filter; do not change acquisition, recording, or analysis behavior.
+- Keep the standard live dashboard intact. The ECG-only view has its own responsive chart and a brief note that manual pulse comparison is observational, not a diagnostic result.
+- Show a labeled seconds axis in the ECG-only chart and let the user choose a rolling 5, 10, 20, or 30-second window. Keep the standard live chart at its current 10-second range.
+- Make the live filter sliders available from the ECG-only tab, and add a mode switch for filtered display versus exact received samples. Raw mode applies only to the ECG-only chart; preserve filtered display in the standard dashboard and recording path.
+- Include received raw samples alongside the existing filtered WebSocket samples; do not change the stored data format or acquisition path.
+
 ## Analysis ECG zoom, pan, and missing-beat candidates
 - Keep the feature in the existing Chart.js ECG chart in `web/static/index.html`.
 - Use elapsed seconds as a linear X axis so the visible range can be set directly.
