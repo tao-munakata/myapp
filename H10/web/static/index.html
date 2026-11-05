@@ -223,7 +223,7 @@
 
 <div id="tab-ecg-only" class="tab-panel">
   <div id="ecg-only-frame">
-    <div id="ecg-only-heading"><span id="ecg-only-status"></span><span>ECG — リアルタイム</span><span id="ecg-only-filter">0.5–40 Hz</span><div id="ecg-only-modes" role="group" aria-label="表示する波形"><button class="ecg-range-btn active" id="ecg-only-filtered" type="button">フィルター</button><button class="ecg-range-btn" id="ecg-only-raw" type="button">受信データ（生）</button></div><div id="ecg-only-ranges" role="group" aria-label="横軸の表示時間">
+    <div id="ecg-only-heading"><span id="ecg-only-status"></span><span>ECG — リアルタイム</span><span id="ecg-only-filter">0.5–40 Hz</span><div id="ecg-only-modes" role="group" aria-label="表示する波形"><button class="ecg-range-btn active" id="ecg-only-filtered" type="button">フィルター</button><button class="ecg-range-btn" id="ecg-only-raw" type="button">受信データ（生）</button></div><div id="ecg-only-scale" role="group" aria-label="Y軸スケール"><button class="ecg-range-btn active" id="ecg-only-auto" type="button">自動</button><button class="ecg-range-btn" id="ecg-only-fixed" type="button">固定</button></div><div id="ecg-only-ranges" role="group" aria-label="横軸の表示時間">
       <button class="ecg-range-btn" data-seconds="5" type="button">5秒</button><button class="ecg-range-btn active" data-seconds="10" type="button">10秒</button><button class="ecg-range-btn" data-seconds="20" type="button">20秒</button><button class="ecg-range-btn" data-seconds="30" type="button">30秒</button>
     </div></div>
     <div id="ecg-only-chart"><canvas id="ecg-only-canvas"></canvas></div>
@@ -354,6 +354,7 @@ let ecgPending = [];   // WebSocket から積まれたサンプル
 let ecgRawPending = [];
 let ecgOnlyWindowSec = 10;
 let ecgOnlyRawMode = false;
+let ecgOnlyFixedScale = false;
 
 const ecgChart = new Chart(document.getElementById('ecg-canvas'), {
   type: 'line',
@@ -426,6 +427,19 @@ document.getElementById('ecg-only-raw').addEventListener('click', () => {
   ecgOnlyChart.data.datasets[0].data = ecgRawBuf.map((value, i) => ({x: (i - (ECG_BUF - 1)) / ECG_DISPLAY_RATE, y: value}));
   ecgOnlyChart.update('none');
 });
+document.getElementById('ecg-only-auto').addEventListener('click', () => {
+  ecgOnlyFixedScale = false;
+  document.getElementById('ecg-only-auto').classList.add('active');
+  document.getElementById('ecg-only-fixed').classList.remove('active');
+});
+document.getElementById('ecg-only-fixed').addEventListener('click', () => {
+  ecgOnlyFixedScale = true;
+  document.getElementById('ecg-only-auto').classList.remove('active');
+  document.getElementById('ecg-only-fixed').classList.add('active');
+  ecgOnlyChart.options.scales.y.min = -1000;
+  ecgOnlyChart.options.scales.y.max = 1000;
+  ecgOnlyChart.update('none');
+});
 
 // 100ms ごとに pending サンプルをバッファに反映して描画
 setInterval(() => {
@@ -451,12 +465,14 @@ setInterval(() => {
   ecgChart.update('none');
   const soloBuffer = ecgOnlyRawMode ? ecgRawBuf : ecgBuf;
   ecgOnlyChart.data.datasets[0].data = soloBuffer.map((value, i) => ({x: (i - (ECG_BUF - 1)) / ECG_DISPLAY_RATE, y: value}));
-  const soloValues = soloBuffer.slice(-ecgOnlyWindowSec * ECG_DISPLAY_RATE).filter(v => v !== null);
-  if (soloValues.length) {
-    const soloMin = Math.min(...soloValues), soloMax = Math.max(...soloValues);
-    const soloPad = (soloMax - soloMin) * 0.1 || 50;
-    ecgOnlyChart.options.scales.y.min = soloMin - soloPad;
-    ecgOnlyChart.options.scales.y.max = soloMax + soloPad;
+  if (!ecgOnlyFixedScale) {
+    const soloValues = soloBuffer.slice(-ecgOnlyWindowSec * ECG_DISPLAY_RATE).filter(v => v !== null);
+    if (soloValues.length) {
+      const soloMin = Math.min(...soloValues), soloMax = Math.max(...soloValues);
+      const soloPad = (soloMax - soloMin) * 0.1 || 50;
+      ecgOnlyChart.options.scales.y.min = soloMin - soloPad;
+      ecgOnlyChart.options.scales.y.max = soloMax + soloPad;
+    }
   }
   ecgOnlyChart.update('none');
 }, 100);
